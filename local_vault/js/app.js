@@ -10,7 +10,8 @@ const State = {
     playingMetadata: null, // Song object of currently open modal
     isEditing: false,
     playlist: [], // Playlist for sequential playback
-    playlistIndex: -1
+    playlistIndex: -1,
+    lastContext: null // Backup for when modal interrupts playback
 };
 
 // Utils
@@ -103,6 +104,21 @@ const FS = {
                             songData.folder = id3.album;
                         }
 
+                        // Restore Local Cover
+                        if (base.coverPath && base.coverPath.startsWith('covers/')) {
+                            songData.coverPath = base.coverPath;
+                            try {
+                                const coversDir = await State.dirHandle.getDirectoryHandle('covers');
+                                const fh = await coversDir.getFileHandle(base.coverPath.split('/')[1]);
+                                const file = await fh.getFile();
+                                songData.coverUrl = URL.createObjectURL(file);
+                            } catch (e) {
+                                // console.warn("Failed to load local cover", base.coverPath);
+                            }
+                        }
+
+
+
                     } catch (e) { console.warn("Failed to read ID3", e); }
                 }
 
@@ -167,6 +183,73 @@ const FS = {
 
     async importFile(fileHandle) {
         // Copy file logic
+    },
+
+    async saveCover(file, id) {
+        if (!State.dirHandle) return null;
+        try {
+            const coversDir = await State.dirHandle.getDirectoryHandle('covers', { create: true });
+            // Use ID or sanitized name
+            const ext = file.name.split('.').pop();
+            const filename = `cover_${id}.${ext}`;
+            const fileHandle = await coversDir.getFileHandle(filename, { create: true });
+            const writable = await fileHandle.createWritable();
+            await writable.write(file);
+            await writable.close();
+            return { filename, handle: fileHandle };
+        } catch (e) {
+            console.error("Failed to save cover", e);
+            return null;
+        }
+    },
+
+    async writeID3(song, coverBlob = null) {
+        if (!song.handle || !window.ID3Writer) return;
+        try {
+            const file = await song.handle.getFile();
+            const buffer = await file.arrayBuffer();
+            const writer = new ID3Writer(buffer);
+
+            // Set Frames
+            if (song.title) writer.setFrame('TIT2', song.title);
+            if (song.persona) writer.setFrame('TPE1', [song.persona]);
+            if (song.folder) writer.setFrame('TALB', song.folder); // Album as Folder
+            if (song.meta.genre) writer.setFrame('TCON', [song.meta.genre]);
+            if (song.meta.bpm) writer.setFrame('TBPM', song.meta.bpm);
+
+            // Lyrics (USLT)
+            if (song.lyrics) {
+                writer.setFrame('USLT', {
+                    description: '',
+                    lyrics: song.lyrics,
+                    language: 'eng'
+                });
+            }
+
+            // Cover (APIC)
+            if (coverBlob) {
+                const coverBuffer = await coverBlob.arrayBuffer();
+                writer.setFrame('APIC', {
+                    type: 3,
+                    data: coverBuffer,
+                    description: 'Cover',
+                    useUnicodeEncoding: false // Defaults to false
+                });
+            }
+
+            writer.addTag();
+            const taggedBlob = writer.getBlob();
+
+            // Write back to file
+            const writable = await song.handle.createWritable();
+            await writable.write(taggedBlob);
+            await writable.close();
+            console.log("ID3 Tags Written Successfully");
+            return true;
+        } catch (e) {
+            console.error("ID3 Write Failed", e);
+            return false;
+        }
     }
 };
 
@@ -270,6 +353,10 @@ const AudioEngine = {
     el: new Audio(),
 
     init() {
+        // Modal Play Button (Persistent)
+        const modalBtn = $('#play-pause-btn');
+        if (modalBtn) modalBtn.onclick = () => this.toggle();
+
         this.el.addEventListener('play', () => {
             if (!Visualizer.isInit) Visualizer.init(this.el);
             if (Visualizer.ctx && Visualizer.ctx.state === 'suspended') Visualizer.ctx.resume();
@@ -282,6 +369,11 @@ const AudioEngine = {
                 State.playingId = song.id;
                 if (UI.updateFooter) UI.updateFooter(song);
             }
+            this.updateButtonState(true);
+        });
+
+        this.el.addEventListener('pause', () => {
+            this.updateButtonState(false);
         });
 
         this.el.addEventListener('timeupdate', () => {
@@ -328,6 +420,9 @@ const AudioEngine = {
         this.el.play();
         State.playingId = song.id;
 
+        // Force UI Sync Immediately
+        if (UI.updateFooter) UI.updateFooter(song);
+
         // If Play All active and modal open, ensure modal content updates if we want?
         // Actually for now let's just keep playing. 
         // If the user wants to see the new song they can click it. 
@@ -344,11 +439,30 @@ const AudioEngine = {
         }
 
         // Update Button State to Play
+        this.updateButtonState(true);
+    },
+
+    updateButtonState(isPlaying) {
+        // Modal Button
         const btn = $('#play-pause-btn');
         if (btn) {
-            btn.innerHTML = `<i data-lucide="pause" class="w-8 h-8 fill-white text-white"></i><span class="text-xl tracking-tight uppercase">Pause</span>`;
-            lucide.createIcons();
+            if (isPlaying) {
+                btn.innerHTML = `<i data-lucide="pause" class="w-8 h-8 fill-white text-white"></i><span class="text-xl tracking-tight uppercase">Pause</span>`;
+            } else {
+                btn.innerHTML = `<i data-lucide="play" class="w-8 h-8 fill-red-600 text-red-600"></i><span class="text-xl tracking-tight uppercase">Play</span>`;
+            }
         }
+
+        // Footer Button
+        const fBtn = $('#btn-play-pause-footer');
+        if (fBtn) {
+            if (isPlaying) {
+                fBtn.innerHTML = `<i data-lucide="pause" class="w-5 h-5 fill-current"></i>`;
+            } else {
+                fBtn.innerHTML = `<i data-lucide="play" class="w-5 h-5 fill-current"></i>`;
+            }
+        }
+        lucide.createIcons();
     },
 
     playFolder(folderName) {
@@ -380,20 +494,12 @@ const AudioEngine = {
     },
 
     toggle() {
-        const btn = $('#play-pause-btn');
         if (this.el.paused) {
             this.el.play();
-            if (btn) {
-                btn.innerHTML = `<i data-lucide="pause" class="w-8 h-8 fill-white text-white"></i><span class="text-xl tracking-tight uppercase">Pause</span>`;
-                lucide.createIcons();
-            }
         } else {
             this.el.pause();
-            if (btn) {
-                btn.innerHTML = `<i data-lucide="play" class="w-8 h-8 fill-red-600 text-red-600"></i><span class="text-xl tracking-tight uppercase">Play</span>`;
-                lucide.createIcons();
-            }
         }
+        // State listeners handle UI
     },
 
     setVolume(val) {
@@ -414,6 +520,13 @@ const UI = {
         $('#landing-screen').classList.add('hidden');
         $('#app-container').classList.remove('hidden');
         $('#app-container').classList.remove('opacity-0');
+    },
+
+    toggleMobileMenu() {
+        const sidebar = $('#app-sidebar');
+        const overlay = $('#sidebar-overlay');
+        sidebar.classList.toggle('-translate-x-full');
+        overlay.classList.toggle('hidden');
     },
 
     updateFooter(song) {
@@ -673,12 +786,34 @@ const UI = {
         $('#asset-modal').classList.remove('hidden');
 
         // 1. Sidebar Info - Cover
+        // 1. Sidebar Info - Cover
         const coverCont = $('#modal-cover-container');
-        if (s.coverUrl) {
-            coverCont.innerHTML = `<img src="${s.coverUrl}" class="w-full h-full object-cover">`;
-        } else {
-            coverCont.innerHTML = `<i data-lucide="music" class="w-24 h-24 text-zinc-400 opacity-20"></i>`;
-        }
+        coverCont.className = `w-72 h-72 rounded-[4.5rem] bg-zinc-200 shadow-2xl flex items-center justify-center relative overflow-hidden shrink-0 group cursor-pointer`;
+        coverCont.onclick = () => {
+            if (State.isEditing) UI.handleChangeCover();
+        };
+
+        const renderCover = () => {
+            if (s.coverUrl) {
+                coverCont.innerHTML = `
+                    <img src="${s.coverUrl}" class="w-full h-full object-cover transition-opacity ${State.isEditing ? 'opacity-50' : ''}">
+                    ${State.isEditing ? `<div class="absolute inset-0 flex items-center justify-center"><i data-lucide="upload" class="w-12 h-12 text-zinc-900"></i></div>` : ''}
+                `;
+            } else {
+                coverCont.innerHTML = `
+                    <i data-lucide="music" class="w-24 h-24 text-zinc-400 opacity-20"></i>
+                     ${State.isEditing ? `<div class="absolute inset-0 flex items-center justify-center bg-black/10"><i data-lucide="upload" class="w-12 h-12 text-zinc-500"></i></div>` : ''}
+                `;
+            }
+            lucide.createIcons();
+        };
+        renderCover();
+
+        // Pass renderCover to be callable from toggleEditMode if we want dynamic update? 
+        // Actually toggleEditMode re-renders content, but cover is outside content area.
+        // Let's attach renderCover to UI instance or re-call openModal logic? 
+        // Better: Make updateModalCover function.
+        this.updateModalCover = renderCover;
 
         $('#modal-title-section').innerHTML = `
             <h3 class="text-3xl font-black mb-2 tracking-tighter truncate leading-tight">${s.title}</h3>
@@ -698,7 +833,15 @@ const UI = {
         if (s.handle) {
             // Check if we are already playing this song (e.g. from playlist)
             if (State.playingId !== s.id) {
-                // New song selection from Modal: Clear playlist context to prevent auto-advance
+                // New song selection from Modal: Backup context
+                State.lastContext = {
+                    playlist: [...State.playlist],
+                    index: State.playlistIndex,
+                    id: State.playingId,
+                    wasPlaying: !AudioEngine.el.paused
+                };
+
+                // Clear playlist context locally for this modal session
                 State.playlist = [];
                 State.playlistIndex = -1;
 
@@ -707,12 +850,20 @@ const UI = {
                 AudioEngine.el.src = url;
 
                 // Reset Main Play Button (since new source is paused)
-                $('#play-pause-btn').innerHTML = `<i data-lucide="play" class="w-8 h-8 fill-red-600 text-red-600"></i><span class="text-xl tracking-tight uppercase">Play</span>`;
-                lucide.createIcons();
+                AudioEngine.updateButtonState(false);
+
+                // Safe re-attach listener
+                const mBtn = $('#play-pause-btn');
+                if (mBtn) mBtn.onclick = () => AudioEngine.toggle();
+
             } else {
                 // Already playing this song (e.g. opened modal while playlist running)
                 // Just sync button state
-                AudioEngine.updateButtonState(AudioEngine.el.paused ? 'play' : 'pause');
+                AudioEngine.updateButtonState(!AudioEngine.el.paused);
+
+                // Safe re-attach listener
+                const mBtn = $('#play-pause-btn');
+                if (mBtn) mBtn.onclick = () => AudioEngine.toggle();
             }
         }
     },
@@ -833,13 +984,45 @@ const UI = {
             State.isEditing = true;
             this.updateEditButtonUI();
             this.renderModalContent();
+            if (this.updateModalCover) this.updateModalCover(); // Update Cover UI
         } else {
             // Save Changes
             this.saveMetadata();
         }
     },
 
-    saveMetadata() {
+    async handleChangeCover() {
+        try {
+            const [fileHandle] = await window.showOpenFilePicker({
+                types: [{
+                    description: 'Images',
+                    accept: { 'image/*': ['.png', '.gif', '.jpeg', '.jpg', '.webp'] }
+                }]
+            });
+            const file = await fileHandle.getFile();
+
+            // Save to Vault
+            const saved = await FS.saveCover(file, State.playingMetadata.id);
+            if (saved) {
+                // For now, use object URL for immediate display
+                // Real persistence relies on reading 'covers' folder on load. 
+                // But for "Local Vault" just creating a URL from the saved file handle or file is fine.
+                // We should store referencing logic.
+                // For this session: 
+                const url = URL.createObjectURL(file);
+                State.playingMetadata.coverUrl = url;
+                State.playingMetadata.coverPath = 'covers/' + saved.filename;
+
+                // Update UI
+                this.updateModalCover();
+                this.showToast("Cover updated!");
+            }
+        } catch (e) {
+            console.log("Cover change cancelled", e);
+        }
+    },
+
+    async saveMetadata() {
         const s = State.playingMetadata;
         if (!s) return;
 
@@ -853,14 +1036,27 @@ const UI = {
         s.lyrics = $('#inp-lyrics').value;
         s.memo = $('#inp-memo').value;
 
-        // Save
-        FS.saveVault(); // Persist to JSON
+        this.showToast("Saving & Writing to MP3...");
+
+        // Write ID3
+        let coverBlob = null;
+        if (s.coverUrl) {
+            try {
+                const r = await fetch(s.coverUrl);
+                coverBlob = await r.blob();
+            } catch (e) { console.warn("Failed to fetch cover for ID3", e); }
+        }
+        await FS.writeID3(s, coverBlob);
+
+        // Save Vault JSON
+        await FS.saveVault();
 
         State.isEditing = false;
         this.updateEditButtonUI();
         this.renderModalContent(); // Re-render read-only
+        if (this.updateModalCover) this.updateModalCover(); // Refresh Cover (remove overlay)
         this.render(); // Update grid (in case title/folder changed)
-        this.showToast("Changes saved to Vault.");
+        this.showToast("Metadata & MP3 Saved!");
     },
 
     handleAddTag(e) {
@@ -892,11 +1088,40 @@ const UI = {
         lucide.createIcons();
     },
 
-    closeModal() {
+    async closeModal() {
         AudioEngine.el.pause();
         $('#asset-modal').classList.add('hidden');
-        State.playingMetadata = null;
+        State.playingMetadata = null; // Clear context
         State.isEditing = false;
+
+        // Restore Context if we interrupted something
+        if (State.lastContext) {
+            State.playlist = State.lastContext.playlist;
+            State.playlistIndex = State.lastContext.index;
+
+            const oldId = State.lastContext.id;
+            const oldSong = State.songs.find(x => x.id === oldId);
+
+            if (oldSong) {
+                // Restore Audio Source
+                try {
+                    const file = await oldSong.handle.getFile();
+                    AudioEngine.el.src = URL.createObjectURL(file);
+                    // Don't auto-resume, just be ready. 
+                    // Or if user wants seamless return? 
+                    // User said: "Entire playback should not be playing report's song".
+                    // Implies stopping Report song is key.
+                    // Restoring source means Footer matches Audio.
+                    State.playingId = oldId;
+                    UI.updateFooter(oldSong);
+                    AudioEngine.updateButtonState(false); // Paused
+                } catch (e) { console.error("Failed to restore context", e); }
+            } else {
+                // If no old song, just reset UI?
+                UI.updateFooter(null);
+            }
+            State.lastContext = null;
+        }
     }
 };
 

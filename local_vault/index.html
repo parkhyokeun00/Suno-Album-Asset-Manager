@@ -11,6 +11,7 @@
     <script src="https://unpkg.com/lucide@latest"></script>
     <!-- jsmediatags for ID3 Metadata -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js"></script>
+    <script src="https://unpkg.com/browser-id3-writer@4.0.0/dist/browser-id3-writer.min.js"></script>
     <link rel="stylesheet" href="css/style.css">
 </head>
 
@@ -46,9 +47,15 @@
     </div>
 
     <div id="app-container" class="flex h-screen w-full hidden opacity-0 transition-opacity duration-500">
+        <!-- Mobile Sidebar Overlay -->
+        <div id="sidebar-overlay"
+            class="fixed inset-0 bg-black/50 z-30 hidden md:hidden backdrop-blur-sm transition-opacity"
+            onclick="VaultApp.UI.toggleMobileMenu()"></div>
+
         <!-- Sidebar -->
-        <aside class="w-80 border-r border-zinc-200 bg-white flex flex-col z-20 shadow-xl shrink-0">
-            <div class="p-10">
+        <aside id="app-sidebar"
+            class="fixed inset-y-0 left-0 w-80 border-r border-zinc-200 bg-white flex flex-col z-40 shadow-2xl shrink-0 transform -translate-x-full md:translate-x-0 transition-transform duration-300 md:relative md:shadow-xl">
+            <div class="p-8 md:p-10 flex justify-between items-center">
                 <div class="flex items-center space-x-4">
                     <div
                         class="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-500/30">
@@ -59,6 +66,11 @@
                         <p class="text-[9px] font-black text-blue-600 uppercase tracking-[0.3em]">Vault</p>
                     </div>
                 </div>
+                <!-- Close Button (Mobile Only) -->
+                <button onclick="VaultApp.UI.toggleMobileMenu()"
+                    class="md:hidden p-2 text-zinc-400 hover:text-zinc-900">
+                    <i data-lucide="x" class="w-6 h-6"></i>
+                </button>
             </div>
 
             <div class="flex-1 px-4 overflow-y-auto custom-scrollbar">
@@ -98,10 +110,15 @@
         </aside>
 
         <!-- Main Content -->
-        <main class="flex-1 overflow-hidden flex flex-col relative">
+        <main class="flex-1 overflow-hidden flex flex-col relative w-full">
             <header
-                class="h-28 border-b border-zinc-200 bg-white/80 backdrop-blur-3xl flex items-center justify-between px-12 z-10">
-                <div class="flex items-center space-x-8 flex-1 max-w-2xl">
+                class="h-24 md:h-28 border-b border-zinc-200 bg-white/80 backdrop-blur-3xl flex items-center justify-between px-4 md:px-12 z-10 shrink-0">
+                <div class="flex items-center space-x-4 md:space-x-8 flex-1 max-w-2xl">
+                    <!-- Hamburger (Mobile) -->
+                    <button onclick="VaultApp.UI.toggleMobileMenu()" class="md:hidden p-2 -ml-2 text-zinc-600">
+                        <i data-lucide="menu" class="w-6 h-6"></i>
+                    </button>
+
                     <div class="relative flex-1 group">
                         <i data-lucide="search"
                             class="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-400"></i>
@@ -124,7 +141,7 @@
             </header>
 
             <section id="asset-grid"
-                class="flex-1 p-12 overflow-y-auto custom-scrollbar grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-10 pb-40">
+                class="flex-1 p-4 md:p-12 overflow-y-auto custom-scrollbar grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 md:gap-10 pb-40">
                 <!-- Assets -->
             </section>
         </main>
@@ -167,7 +184,7 @@
         </div>
 
         <!-- Right: Visualizer & Volume -->
-        <div class="flex items-center justify-end w-1/4 space-x-6">
+        <div class="flex items-center justify-end w-1/4 space-x-6 hidden md:flex">
             <canvas id="audio-visualizer" width="200" height="40" class="h-10 w-48 opacity-80"></canvas>
             <div class="hidden xl:flex items-center space-x-2 w-24">
                 <i data-lucide="volume-2" class="w-4 h-4 text-zinc-400"></i>
@@ -181,11 +198,11 @@
     <div id="asset-modal"
         class="fixed inset-0 z-50 hidden flex items-center justify-center p-4 bg-zinc-950/95 backdrop-blur-2xl animate-in fade-in duration-300">
         <div
-            class="bg-white w-full max-w-7xl max-h-[96vh] h-[96vh] rounded-[4.5rem] shadow-2xl overflow-hidden flex flex-col md:flex-row border border-zinc-200">
+            class="bg-white w-full max-w-7xl max-h-[96vh] h-[96vh] rounded-[2.5rem] md:rounded-[4.5rem] shadow-2xl overflow-y-auto md:overflow-hidden flex flex-col md:flex-row border border-zinc-200">
 
             <!-- Modal Sidebar -->
             <div
-                class="w-full md:w-[420px] bg-zinc-50 p-12 border-r border-zinc-100 flex flex-col items-center shrink-0 h-full overflow-y-auto custom-scrollbar">
+                class="w-full md:w-[420px] bg-zinc-50 p-8 md:p-12 border-b md:border-b-0 md:border-r border-zinc-100 flex flex-col items-center shrink-0 h-auto md:h-full overflow-visible md:overflow-y-auto custom-scrollbar relative">
                 <div class="w-full flex justify-between mb-8">
                     <span
                         class="text-[10px] font-black px-4 py-1.5 bg-zinc-900 text-white rounded-full tracking-widest uppercase">Vault</span>
@@ -233,7 +250,8 @@
                     </div>
                 </div>
                 <!-- Edit/Save Button Fixed at bottom of sidebar content if space permits, or scrolling -->
-                <div class="w-full mt-auto">
+                <!-- Edit/Save Button Fixed at bottom of sidebar content if space permits, or scrolling -->
+                <div class="w-full mt-auto sticky bottom-0 z-10 bg-zinc-50 pb-2">
                     <button id="btn-edit-save"
                         class="w-full py-6 rounded-[2.5rem] font-black flex items-center justify-center space-x-3 active:scale-95 transition-all shadow-xl bg-white border-2 border-zinc-900 text-zinc-900 hover:bg-zinc-900 hover:text-white">
                         <i data-lucide="edit-3" class="w-6 h-6"></i> <span>Edit Metadata</span>
@@ -242,7 +260,8 @@
             </div>
 
             <!-- Modal Content -->
-            <div class="flex-1 overflow-y-auto p-16 custom-scrollbar bg-white relative">
+            <div
+                class="flex-1 overflow-visible md:overflow-y-auto p-6 md:p-16 custom-scrollbar bg-white relative h-auto md:h-full">
                 <div class="flex justify-end items-center mb-6">
                     <button onclick="VaultApp.closeModal()"
                         class="group flex items-center space-x-3 text-zinc-300 hover:text-zinc-900 transition-all">
