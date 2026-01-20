@@ -1,0 +1,1205 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Suno Vault (Local)</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Dexie.js (IndexedDB Wrapper) -->
+    <script src="https://unpkg.com/dexie@latest/dist/dexie.js"></script>
+    <!-- jsmediatags for ID3 Metadata -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(100, 100, 100, 0.2);
+            border-radius: 20px;
+        }
+
+        .glass {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(12px);
+        }
+    </style>
+</head>
+
+<body class="bg-zinc-50 text-zinc-900 overflow-hidden h-screen flex">
+
+    <!-- Welcome / Connect Screen -->
+    <div id="welcome-screen"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-zinc-50 transition-transform duration-700">
+        <div class="text-center max-w-lg p-10">
+            <div
+                class="w-24 h-24 bg-blue-600 rounded-3xl flex items-center justify-center shadow-2xl shadow-blue-600/30 mx-auto mb-8 animate-bounce">
+                <i data-lucide="hard-drive" class="w-12 h-12 text-white"></i>
+            </div>
+            <h1 class="text-4xl font-black tracking-tighter mb-4">Suno Vault <span class="text-blue-600">Local</span>
+            </h1>
+            <p class="text-zinc-500 font-medium mb-10 leading-relaxed">
+                Your music, your storage.<br>
+                Connect a local folder to start building your private library.<br>
+                <span class="text-xs text-zinc-400 mt-2 block">(No files are uploaded to the cloud)</span>
+            </p>
+            <button onclick="connectLibrary()"
+                class="group relative px-10 py-5 bg-zinc-900 text-white rounded-[2rem] font-bold text-lg shadow-2xl hover:scale-105 active:scale-95 transition-all overflow-hidden">
+                <span class="relative z-10 flex items-center space-x-3">
+                    <i data-lucide="folder-open" class="w-6 h-6"></i>
+                    <span>Select Library Folder</span>
+                </span>
+                <div
+                    class="absolute inset-0 bg-blue-600 transform scale-x-0 group-hover:scale-x-100 transition-transform origin-left duration-500">
+                </div>
+            </button>
+            <div id="loading-status" class="mt-8 hidden">
+                <div class="w-full bg-zinc-200 rounded-full h-2 mb-2 overflow-hidden">
+                    <div id="progress-bar" class="bg-blue-600 h-2 rounded-full w-0 transition-all duration-300"></div>
+                </div>
+                <p id="status-text" class="text-xs font-black uppercase tracking-widest text-zinc-400">Scanning...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- App UI (Initially Hidden) -->
+    <div id="app-ui" class="flex-1 flex w-full opacity-0 transition-opacity duration-1000">
+        <!-- Sidebar -->
+        <aside class="w-80 border-r border-zinc-200 bg-white flex flex-col z-20 shadow-xl">
+            <div class="p-10">
+                <div class="flex items-center space-x-4">
+                    <div
+                        class="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/30">
+                        <i data-lucide="music" class="w-6 h-6 text-white"></i>
+                    </div>
+                    <div>
+                        <h1 class="font-black text-xl tracking-tighter leading-none">SUNO</h1>
+                        <p class="text-[9px] font-black text-blue-600 uppercase tracking-[0.3em]">Local V1.0</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex-1 px-4 overflow-y-auto custom-scrollbar">
+                <button onclick="renderAll()" id="btn-all-tracks"
+                    class="w-full flex items-center space-x-4 px-6 py-5 rounded-2xl transition-all mb-8 bg-zinc-900 text-white shadow-xl">
+                    <i data-lucide="database" class="w-5 h-5"></i>
+                    <span class="font-black text-sm uppercase tracking-wide">All Tracks</span>
+                </button>
+
+                <div class="px-6 mb-4 font-black text-xs uppercase tracking-widest text-zinc-400">Folders</div>
+                <div id="folder-list" class="space-y-1 mb-10">
+                    <!-- Dynamic Folder List -->
+                </div>
+            </div>
+
+            <div class="p-6 bg-zinc-50 border-t border-zinc-100">
+                <div class="bg-white p-4 rounded-3xl border border-zinc-200 shadow-sm text-center">
+                    <p class="text-[10px] font-black text-zinc-300 uppercase tracking-widest mb-1">Total Assets</p>
+                    <p id="total-count" class="text-2xl font-black text-zinc-900">0</p>
+                </div>
+            </div>
+            <div class="p-6 bg-zinc-50 border-t border-zinc-100 space-y-3">
+                <input type="file" id="single-upload" class="hidden" accept="audio/*"
+                    onchange="handleSingleUpload(event)">
+                <button onclick="document.getElementById('single-upload').click()"
+                    class="w-full flex items-center justify-center space-x-3 px-5 py-4 rounded-2xl bg-white text-zinc-900 text-xs font-black uppercase tracking-widest hover:bg-zinc-100 transition-all border border-zinc-200 shadow-sm">
+                    <i data-lucide="upload" class="w-4 h-4"></i>
+                    <span>Quick Upload</span>
+                </button>
+                <button onclick="addManualAsset()"
+                    class="w-full flex items-center justify-center space-x-3 px-5 py-4 rounded-2xl bg-zinc-900 text-white text-xs font-black uppercase tracking-widest shadow-xl active:scale-95 transition-all hover:bg-black">
+                    <i data-lucide="plus" class="w-5 h-5"></i>
+                    <span>New Asset Card</span>
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="flex-1 flex flex-col relative bg-white">
+            <header
+                class="h-28 border-b border-zinc-100 flex items-center px-10 justify-between bg-white/80 backdrop-blur-md z-10 transition-all">
+                <div class="flex items-center space-x-8 flex-1 max-w-2xl">
+                    <div class="relative flex-1 group">
+                        <i data-lucide="search"
+                            class="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-400"></i>
+                        <input type="text" id="search-input" placeholder="Search Title, Artist, Tags..."
+                            class="w-full pl-14 pr-12 py-4 bg-zinc-50 rounded-2xl text-sm font-bold focus:outline-none focus:ring-4 focus:ring-blue-500/10 border-none transition-all shadow-inner hover:bg-zinc-100"
+                            oninput="handleSearch(this.value)">
+                    </div>
+                </div>
+                <div class="flex items-center space-x-6">
+                    <div class="text-right hidden md:block">
+                        <p class="text-[10px] font-black text-zinc-400 uppercase tracking-widest opacity-50">View Mode
+                        </p>
+                        <p id="current-view" class="text-sm font-black text-blue-600 uppercase">Library</p>
+                    </div>
+                    <button onclick="rescanLibrary()"
+                        class="p-3 rounded-2xl bg-zinc-50 border border-zinc-200 hover:bg-blue-600 hover:text-white transition-all shadow-sm group"
+                        title="Rescan Folder">
+                        <i data-lucide="refresh-cw" class="w-5 h-5 text-zinc-400 group-hover:text-white"></i>
+                    </button>
+                </div>
+            </header>
+
+            <section id="asset-grid"
+                class="flex-1 overflow-y-auto p-10 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-8 content-start custom-scrollbar bg-zinc-50/50">
+                <!-- Dynamic Cards -->
+            </section>
+        </main>
+    </div>
+
+    <!-- Asset Modal (Ported from suno vault.html) -->
+    <div id="asset-modal"
+        class="fixed inset-0 z-50 hidden flex items-center justify-center p-4 bg-zinc-950/95 backdrop-blur-2xl animate-in fade-in duration-300">
+        <div
+            class="bg-white w-full max-w-7xl max-h-[96vh] rounded-[4.5rem] shadow-2xl overflow-hidden flex flex-col md:flex-row border border-zinc-200">
+            <!-- Modal Sidebar -->
+            <div
+                class="w-full md:w-[420px] bg-zinc-50 p-12 border-r border-zinc-100 flex flex-col items-center shrink-0">
+                <div class="w-full flex justify-end mb-4 md:mb-8">
+                    <button onclick="closeModal()" class="p-2 text-zinc-400 hover:text-black"><i
+                            data-lucide="x"></i></button>
+                </div>
+                <div class="flex-1 flex flex-col items-center justify-center w-full space-y-8">
+                    <div id="modal-cover-container"
+                        class="w-64 h-64 rounded-[3.5rem] bg-zinc-200 shadow-2xl flex items-center justify-center relative overflow-hidden">
+                    </div>
+
+                    <div class="text-center w-full px-4" id="modal-title-section"></div>
+
+                    <div class="w-full space-y-6">
+                        <div id="player-controls-modal" class="space-y-4 px-2 hidden">
+                            <div class="h-1.5 bg-zinc-200 rounded-full overflow-hidden relative cursor-pointer group"
+                                onclick="seekAudio(event)">
+                                <div id="modal-progress"
+                                    class="absolute top-0 left-0 h-full bg-blue-600 transition-all duration-100 relative">
+                                    <div
+                                        class="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="flex justify-between text-[10px] font-black text-zinc-400 font-mono mt-2">
+                                <span id="modal-time">0:00</span>
+                                <span id="modal-duration">0:00</span>
+                            </div>
+
+                            <button onclick="togglePlay()"
+                                class="w-full py-5 rounded-[2.5rem] bg-zinc-900 text-white font-black flex items-center justify-center space-x-4 shadow-2xl active:scale-95 transition-all hover:bg-black mt-6">
+                                <div id="modal-play-icon" class="flex items-center">
+                                    <i data-lucide="play" class="w-6 h-6 fill-current"></i>
+                                    <span class="text-lg tracking-tight uppercase ml-4">Play Preview</span>
+                                </div>
+                            </button>
+
+                            <!-- Volume & Bass Boost (Added) -->
+                            <div
+                                class="p-6 bg-white rounded-[2.5rem] border border-zinc-100 space-y-6 shadow-inner mt-6">
+                                <div class="space-y-3">
+                                    <div
+                                        class="flex items-center justify-between text-[9px] font-black text-zinc-400 uppercase tracking-widest">
+                                        <span class="flex items-center"><i data-lucide="volume-2"
+                                                class="w-3.5 h-3.5 mr-2 text-blue-500"></i> Master Gain</span>
+                                        <span id="volume-label">80%</span>
+                                    </div>
+                                    <input type="range" id="volume-slider" min="0" max="100" value="80"
+                                        class="w-full h-1.5 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                                        oninput="updateVolume(this.value)">
+                                </div>
+                                <button id="bass-boost-btn" onclick="toggleBassBoost()"
+                                    class="w-full py-3 rounded-xl text-[9px] font-black border-2 transition-all text-zinc-400 border-zinc-100 hover:border-zinc-300">
+                                    BASS BOOST OFF
+                                </button>
+                            </div>
+                        </div>
+
+                        <div id="modal-upload-section" class="mt-6 pt-6 border-t border-zinc-100">
+                            <input type="file" id="modal-audio-upload" class="hidden" accept="audio/*"
+                                onchange="handleModalUpload(event)">
+                            <button onclick="document.getElementById('modal-audio-upload').click()"
+                                class="w-full py-5 rounded-[2.5rem] bg-zinc-100 text-zinc-500 font-black flex items-center justify-center space-x-3 hover:bg-blue-600 hover:text-white transition-all shadow-sm">
+                                <i data-lucide="upload" class="w-5 h-5"></i>
+                                <span class="text-xs uppercase tracking-widest">Attach / Replace Audio</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="w-full pt-8 border-t border-zinc-100 mt-8 space-y-4">
+                    <button id="edit-save-toggle" onclick="toggleEditMode()"
+                        class="w-full py-5 rounded-[2.5rem] font-black flex items-center justify-center space-x-3 active:scale-95 transition-all shadow-xl bg-zinc-900 text-white">
+                        <i data-lucide="edit-3" class="w-6 h-6"></i> <span id="edit-save-text"
+                            class="text-lg uppercase">Edit Asset</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Modal Content -->
+            <div class="flex-1 overflow-y-auto p-12 custom-scrollbar bg-white relative">
+                <!-- Removed top auto-tags, moved to Context section -->
+                <div id="modal-edit-grid" class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-10 hidden"></div>
+
+                <div class="space-y-10">
+                    <section class="bg-zinc-50 p-10 rounded-[4rem] border border-zinc-100 shadow-inner">
+                        <div class="flex items-center mb-6 space-x-4">
+                            <div class="p-3 bg-blue-600 rounded-2xl text-white"><i data-lucide="type"
+                                    class="w-6 h-6"></i></div>
+                            <h4 class="text-lg font-black text-zinc-900 uppercase tracking-widest">Creative Intelligence
+                            </h4>
+                        </div>
+                        <div class="space-y-8">
+                            <div>
+                                <p class="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-3 px-2">
+                                    Prompt</p>
+                                <textarea id="edit-prompt"
+                                    class="w-full p-6 rounded-[2.5rem] text-sm italic min-h-[120px] outline-none bg-transparent border-none cursor-default text-zinc-500 resize-none"
+                                    readonly></textarea>
+                            </div>
+                            <div>
+                                <p class="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-3 px-2">
+                                    Lyrics</p>
+                                <textarea id="edit-lyrics"
+                                    class="w-full p-8 font-mono text-sm leading-loose h-[400px] outline-none rounded-[3rem] bg-zinc-900 text-zinc-100 border border-zinc-800 custom-scrollbar resize-none"
+                                    readonly></textarea>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="bg-zinc-50 p-10 rounded-[4rem] border border-zinc-100 shadow-inner">
+                        <div class="flex items-center mb-6 space-x-4">
+                            <div class="p-3 bg-purple-600 rounded-2xl text-white"><i data-lucide="info"
+                                    class="w-6 h-6"></i></div>
+                            <h4 class="text-lg font-black text-zinc-900 uppercase tracking-widest">Asset Context</h4>
+                        </div>
+                        <div class="space-y-8">
+                            <!-- Tags Section -->
+                            <div>
+                                <p class="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-3 px-2">Tags
+                                </p>
+                                <div id="tag-display"
+                                    class="p-6 bg-white rounded-[3rem] border border-zinc-100 shadow-sm min-h-[100px] mb-4">
+                                    <!-- Dynamic Tags -->
+                                </div>
+                                <input type="text" id="tag-input" placeholder="Enter new tag..."
+                                    class="w-full py-3 bg-transparent border-none outline-none text-base font-bold text-blue-500 placeholder:text-zinc-300 hidden px-6 border-b-2 border-zinc-100 focus:border-blue-500 transition-all"
+                                    onkeydown="handleAddTag(event)">
+                            </div>
+
+                            <!-- Memo Section -->
+                            <div>
+                                <p class="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-3 px-2">
+                                    Internal Memos</p>
+                                <textarea id="edit-memo"
+                                    class="w-full p-8 rounded-[3rem] text-base min-h-[150px] outline-none bg-transparent border-none cursor-default resize-none"
+                                    readonly></textarea>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification Toast -->
+    <div id="toast"
+        class="fixed bottom-10 right-10 z-[100] transform translate-y-20 opacity-0 transition-all duration-500 bg-zinc-900 text-white px-8 py-4 rounded-2xl font-bold shadow-2xl flex items-center space-x-3">
+        <i data-lucide="info" class="w-5 h-5 text-blue-500"></i>
+        <span id="toast-message">Notification</span>
+    </div>
+
+    <!-- Audio Element (Backend) -->
+    <audio id="audio-element"></audio>
+
+    <script>
+        // --- 1. Database Setup (Dexie.js) ---
+        const db = new Dexie('SunoVaultLocalDB');
+        db.version(2).stores({
+            tracks: '++id, fileHandle, title, artist, album, genre, folderName, [folderName+title]',
+            folders: '&name', // Unique folder names
+            appState: 'key, value'
+        }).upgrade(tx => {
+            // Migration for V2 if needed (not strictly necessary for fresh DB, but good practice)
+        });
+
+        // --- 2. State & Audio ---
+        let audio = document.getElementById('audio-element');
+        let audioContext, source, bassFilter;
+        let isBassBoosted = false;
+
+        // Ensure strictly one audio context
+        function initAudio() {
+            if (audioContext) return;
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                // Create source from existing audio element
+                source = audioContext.createMediaElementSource(audio);
+                bassFilter = audioContext.createBiquadFilter();
+                bassFilter.type = 'lowshelf';
+                bassFilter.frequency.value = 200;
+                bassFilter.gain.value = 0;
+
+                // Connect: Source -> Filter -> Destination
+                source.connect(bassFilter);
+                bassFilter.connect(audioContext.destination);
+            } catch (e) {
+                console.warn("Web Audio API init failed (maybe already connected):", e);
+            }
+        }
+
+        function updateVolume(val) {
+            audio.volume = val / 100;
+            document.getElementById('volume-label').textContent = `${val}%`;
+        }
+
+        function toggleBassBoost() {
+            initAudio(); // Ensure context exists
+            if (audioContext.state === 'suspended') audioContext.resume();
+
+            isBassBoosted = !isBassBoosted;
+            const btn = document.getElementById('bass-boost-btn');
+
+            if (isBassBoosted) {
+                bassFilter.gain.setTargetAtTime(15, audioContext.currentTime, 0.1); // +15dB
+                btn.textContent = "BASS BOOST ON";
+                btn.classList.remove('text-zinc-400', 'border-zinc-100');
+                btn.classList.add('text-blue-600', 'border-blue-600', 'bg-blue-50');
+            } else {
+                bassFilter.gain.setTargetAtTime(0, audioContext.currentTime, 0.1); // 0dB
+                btn.textContent = "BASS BOOST OFF";
+                btn.classList.add('text-zinc-400', 'border-zinc-100');
+                btn.classList.remove('text-blue-600', 'border-blue-600', 'bg-blue-50');
+            }
+        }
+
+        let isPlaying = false;
+        let rootDirHandle = null;
+        let selectedTrack = null;
+        let isEditing = false;
+        let currentFolderFilter = null; // null = all
+        let searchTerm = "";
+        let allTracksCache = [];
+
+        // --- 3. Initialization ---
+        window.addEventListener('DOMContentLoaded', async () => {
+            lucide.createIcons();
+            try {
+                // Initialize default folders if empty
+                const count = await db.folders.count();
+                if (count === 0) {
+                    await db.folders.bulkAdd([{ name: 'Unsorted' }, { name: 'Favorites' }]);
+                }
+
+                const navEntry = await db.appState.get('rootDir');
+                if (navEntry && navEntry.value) {
+                    rootDirHandle = navEntry.value;
+                    const opts = { mode: 'read' };
+                    if ((await rootDirHandle.queryPermission(opts)) === 'granted') {
+                        switchToApp();
+                        renderAll();
+                    }
+                }
+            } catch (e) { console.log("No previous session."); }
+        });
+
+        function switchToApp() {
+            document.getElementById('welcome-screen').classList.add('-translate-y-full');
+            document.getElementById('app-ui').classList.remove('opacity-0');
+        }
+
+        // --- 4. File System Logic ---
+        async function connectLibrary() {
+            try {
+                rootDirHandle = await window.showDirectoryPicker();
+                await db.appState.put({ key: 'rootDir', value: rootDirHandle });
+                document.getElementById('loading-status').classList.remove('hidden');
+                document.querySelector('#welcome-screen button').classList.add('pointer-events-none', 'opacity-50');
+                await scanFolder(rootDirHandle);
+                switchToApp();
+                renderAll();
+            } catch (err) {
+                console.error(err);
+                alert("Could not access folder.");
+            }
+        }
+
+        async function rescanLibrary() {
+            if (!rootDirHandle) return;
+            if (confirm("Rescan library?")) {
+                await db.tracks.clear();
+                await scanFolder(rootDirHandle);
+                renderAll();
+            }
+        }
+
+        async function scanFolder(dirHandle, path = "") {
+            const statusText = document.getElementById('status-text');
+            for await (const entry of dirHandle.values()) {
+                if (entry.kind === 'file') {
+                    if (entry.name.endsWith('.mp3') || entry.name.endsWith('.wav')) {
+                        if (statusText) statusText.textContent = `Found: ${entry.name}`;
+                        await processFileEntry(entry, "Unsorted"); // Default all new scans to Unsorted for safety, or use path? 
+                        // User request implies manual organization, so 'Unsorted' is a safe default for flat view interaction.
+                        // If we used 'path', it would create many folders automatically. Let's stick to Unsorted or Root.
+                    }
+                } else if (entry.kind === 'directory') {
+                    await scanFolder(entry, path ? `${path}/${entry.name}` : entry.name);
+                }
+            }
+        }
+
+        async function processFileEntry(fileHandle, folderName) {
+            const file = await fileHandle.getFile();
+            const tags = await readTags(file);
+
+            await db.tracks.add({
+                fileHandle: fileHandle,
+                title: tags.title || file.name.replace(/\.[^/.]+$/, ""),
+                artist: tags.artist || "Unknown Artist",
+                album: tags.album || "",
+                genre: tags.genre || "",
+                folderName: folderName,
+                cover: tags.picture,
+                prompt: "",
+                lyrics: "",
+                memo: "",
+                tags: [],
+                bpm: "---",
+                key: "---",
+                addedAt: new Date().toISOString().split('T')[0]
+            });
+        }
+
+        function readTags(file) {
+            return new Promise((resolve) => {
+                jsmediatags.read(file, {
+                    onSuccess: (tag) => {
+                        let picture = null;
+                        if (tag.tags.picture) {
+                            const { data, format } = tag.tags.picture;
+                            let base64String = "";
+                            for (let i = 0; i < data.length; i++) {
+                                base64String += String.fromCharCode(data[i]);
+                            }
+                            picture = `data:${format};base64,${window.btoa(base64String)}`;
+                        }
+                        resolve({
+                            title: tag.tags.title,
+                            artist: tag.tags.artist,
+                            album: tag.tags.album,
+                            genre: tag.tags.genre,
+                            picture: picture
+                        });
+                    },
+                    onError: () => resolve({})
+                });
+            });
+        }
+
+        // --- 5. Rendering & UI ---
+        // Filter State: { type: 'all' | 'folder' | 'genre' | 'persona', value: string }
+        let currentFilter = { type: 'all', value: '' };
+
+        async function renderAll() {
+            currentFilter = { type: 'all', value: '' };
+            searchTerm = "";
+            document.getElementById('search-input').value = "";
+
+            allTracksCache = await db.tracks.toArray();
+            updateUIState();
+            filterTracks();
+            updateSidebar();
+        }
+
+        async function setFilter(type, value) {
+            currentFilter = { type, value };
+            searchTerm = "";
+            document.getElementById('search-input').value = "";
+
+            if (allTracksCache.length === 0) allTracksCache = await db.tracks.toArray();
+            updateUIState();
+            filterTracks();
+            updateSidebar();
+        }
+
+        function handleSearch(val) {
+            searchTerm = val.toLowerCase();
+            filterTracks();
+        }
+
+        function filterTracks() {
+            const filtered = allTracksCache.filter(t => {
+                let matchFilter = true;
+                if (currentFilter.type === 'folder') matchFilter = t.folderName === currentFilter.value;
+                if (currentFilter.type === 'genre') matchFilter = (t.genre || '').trim() === currentFilter.value;
+                if (currentFilter.type === 'persona') matchFilter = (t.artist || '').trim() === currentFilter.value;
+
+                const matchSearch = searchTerm
+                    ? (t.title.toLowerCase().includes(searchTerm) ||
+                        t.artist.toLowerCase().includes(searchTerm) ||
+                        (t.genre && t.genre.toLowerCase().includes(searchTerm)) ||
+                        (t.tags && t.tags.some(tag => tag.toLowerCase().includes(searchTerm))))
+                    : true;
+                return matchFilter && matchSearch;
+            });
+            updateGrid(filtered);
+        }
+
+        async function deleteTrack(id) {
+            if (confirm("Permanently delete this track from library? (File remains on disk)")) {
+                await db.tracks.delete(id);
+                // Refresh
+                allTracksCache = allTracksCache.filter(t => t.id !== id);
+                filterTracks();
+                updateSidebar();
+                showToast("Track removed from library.");
+            }
+        }
+
+        function updateUIState() {
+            const btnAll = document.getElementById('btn-all-tracks');
+            const viewTitle = document.getElementById('current-view');
+
+            const isAll = currentFilter.type === 'all';
+
+            btnAll.className = isAll
+                ? "w-full flex items-center space-x-4 px-6 py-5 rounded-2xl transition-all mb-8 bg-zinc-900 text-white shadow-xl"
+                : "w-full flex items-center space-x-4 px-6 py-5 rounded-2xl transition-all mb-8 text-zinc-500 hover:bg-zinc-100";
+
+            if (isAll) {
+                viewTitle.textContent = "All Library";
+            } else {
+                viewTitle.textContent = `${currentFilter.type}: ${currentFilter.value}`;
+            }
+        }
+
+        function updateGrid(tracks) {
+            const grid = document.getElementById('asset-grid');
+            document.getElementById('total-count').textContent = tracks.length;
+
+            if (tracks.length === 0) {
+                grid.innerHTML = `<div class="col-span-full text-center text-zinc-400 py-20 font-bold italic">No tracks found.</div>`;
+                return;
+            }
+
+            grid.innerHTML = tracks.map(s => {
+                const coverHtml = s.cover
+                    ? `<img src="${s.cover}" class="w-full h-full object-cover">`
+                    : `<i data-lucide="music" class="w-7 h-7 text-zinc-400 group-hover:text-blue-600"></i>`;
+
+                return `
+                    <div 
+                        onclick="openModal(${s.id})" 
+                        draggable="true"
+                        ondragstart="handleDragStart(event, ${s.id})"
+                        class="group bg-white p-8 rounded-[3.5rem] border border-zinc-200 hover:border-blue-500 hover:shadow-2xl hover:shadow-blue-500/10 transition-all duration-500 cursor-pointer relative overflow-hidden active:scale-95"
+                    >
+                        <div class="flex justify-between items-start mb-6 pointer-events-none">
+                            <div class="flex items-center space-x-4">
+                                <div class="w-14 h-14 bg-zinc-50 rounded-3xl flex items-center justify-center group-hover:ring-4 group-hover:ring-blue-500/20 transition-all overflow-hidden shadow-inner">
+                                    ${coverHtml}
+                                </div>
+                                <div class="max-w-[120px]">
+                                    <h3 class="font-black text-lg text-zinc-900 tracking-tight leading-tight truncate px-1">${s.title}</h3>
+                                    <div class="flex items-center space-x-1 mt-1 opacity-60 px-1">
+                                        <i data-lucide="user" class="w-3 h-3 text-blue-500"></i>
+                                        <p class="text-[10px] text-blue-500 font-black uppercase tracking-widest truncate">${s.artist || "No Persona"}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Delete Button (Top Right) -->
+                        <button onclick="event.stopPropagation(); deleteTrack(${s.id})" class="absolute top-8 right-8 p-2 text-zinc-200 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 z-20">
+                            <i data-lucide="trash-2" class="w-5 h-5"></i>
+                        </button>
+
+                        <p class="text-xs text-zinc-400 line-clamp-2 italic mb-6 leading-relaxed font-medium min-h-[2.5rem] pointer-events-none">${s.memo || "No memo..."}</p>
+                        
+                        <div class="grid grid-cols-2 gap-3 mb-6 pointer-events-none">
+                            <div class="bg-zinc-50 p-3 rounded-[1.2rem] border border-zinc-100 text-center shadow-sm">
+                                <span class="text-[8px] font-black text-zinc-400 uppercase tracking-widest block mb-1 opacity-60">GENRE</span>
+                                <span class="text-zinc-900 font-bold text-[10px] truncate block uppercase">${s.genre || '---'}</span>
+                            </div>
+                            <div class="bg-zinc-50 p-3 rounded-[1.2rem] border border-zinc-100 text-center shadow-sm">
+                                <span class="text-[8px] font-black text-zinc-400 uppercase tracking-widest block mb-1 opacity-60">FOLDER</span>
+                                <span class="text-zinc-900 font-bold text-[10px] truncate block uppercase">${s.folderName}</span>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center justify-between pt-6 border-t border-zinc-100 pointer-events-none">
+                            <span class="text-[10px] font-black text-zinc-300 italic flex items-center">
+                                ${s.cover ? `<i data-lucide="image" class="w-3 h-3 mr-1"></i> Attached` : ''}
+                            </span>
+                            <div class="flex items-center text-[10px] font-black text-zinc-400 uppercase tracking-widest">
+                                <i data-lucide="clock" class="w-3 h-3 mr-2 text-blue-500"></i>${s.addedAt}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            lucide.createIcons();
+        }
+
+        async function updateSidebar() {
+            const list = document.getElementById('folder-list');
+            const allFolders = await db.folders.toArray();
+            const tracks = await db.tracks.toArray();
+
+            // Aggregates
+            const folderCounts = {};
+            const genreCounts = {};
+            const personaCounts = {};
+            const uniqueGenres = new Set();
+            const uniquePersonas = new Set();
+
+            tracks.forEach(t => {
+                // Folder
+                folderCounts[t.folderName] = (folderCounts[t.folderName] || 0) + 1;
+
+                // Genre
+                const g = (t.genre || 'Unknown').trim();
+                genreCounts[g] = (genreCounts[g] || 0) + 1;
+                if (g) uniqueGenres.add(g);
+
+                // Persona
+                const p = (t.artist || 'Unknown').trim();
+                personaCounts[p] = (personaCounts[p] || 0) + 1;
+                if (p) uniquePersonas.add(p);
+            });
+
+            // Helper to render section item
+            const renderItem = (type, name, count, isDeletable = false) => {
+                const isActive = currentFilter.type === type && currentFilter.value === name;
+                // Only Folders are drop targets
+                const isDropTarget = type === 'folder';
+
+                return `
+                <div 
+                    ${isDropTarget ? `
+                    ondragover="handleDragOver(event)" 
+                    ondragleave="handleDragLeave(event)" 
+                    ondrop="handleDrop(event, '${name}')"
+                    ` : ''}
+                    onclick="setFilter('${type}', '${name}')" 
+                    class="group relative flex items-center justify-between px-6 py-3 rounded-2xl cursor-pointer transition-all border-2 border-transparent ${isActive ? 'bg-blue-600 text-white shadow-lg' : 'hover:bg-zinc-50'}"
+                >
+                    <div class="flex items-center space-x-3 overflow-hidden pointer-events-none">
+                        <i data-lucide="${type === 'folder' ? 'folder' : (type === 'genre' ? 'music-2' : 'user')}" class="w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-blue-500'}"></i>
+                        <span class="font-bold text-xs ${isActive ? 'text-white' : 'text-zinc-600'} truncate">${name}</span>
+                    </div>
+                    <div class="flex items-center">
+                        <span class="text-[9px] font-black ${isActive ? 'bg-white/20 text-white' : 'bg-zinc-100 text-zinc-400'} px-2 py-0.5 rounded-full mr-2">${count}</span>
+                        ${isDeletable && name !== 'Unsorted' ? `
+                        <button onclick="event.stopPropagation(); deleteFolder('${name}')" class="opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity p-1">
+                            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                        </button>` : ''}
+                    </div>
+                </div>`;
+            };
+
+            let html = '';
+
+            // 1. FOLDERS
+            html += `<div class="px-6 mb-2 mt-2 flex justify-between items-center group">
+                        <p class="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Folders</p>
+                        <button onclick="createNewFolder()" class="text-zinc-300 hover:text-blue-600 transition-colors"><i data-lucide="plus-circle" class="w-4 h-4"></i></button>
+                     </div>`;
+            html += `<div class="space-y-1 mb-6">`;
+            html += allFolders.map(f => renderItem('folder', f.name, folderCounts[f.name] || 0, true)).join('');
+            html += `</div>`;
+
+            // 2. GENRES
+            if (uniqueGenres.size > 0) {
+                html += `<div class="px-6 mb-2 mt-6"><p class="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Genres</p></div>`;
+                html += `<div class="space-y-1 mb-6">`;
+                html += Array.from(uniqueGenres).sort().map(g => renderItem('genre', g, genreCounts[g])).join('');
+                html += `</div>`;
+            }
+
+            // 3. PERSONAS
+            if (uniquePersonas.size > 0) {
+                html += `<div class="px-6 mb-2 mt-6"><p class="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Personas</p></div>`;
+                html += `<div class="space-y-1 mb-6">`;
+                html += Array.from(uniquePersonas).sort().map(p => renderItem('persona', p, personaCounts[p])).join('');
+                html += `</div>`;
+            }
+
+            list.innerHTML = html;
+            lucide.createIcons();
+        }
+
+        // --- Folder Logic ---
+        async function createNewFolder() {
+            const name = prompt("Enter new folder name:");
+            if (name) {
+                try {
+                    await db.folders.add({ name: name });
+                    updateSidebar();
+                } catch (e) {
+                    alert("Folder already exists or invalid name.");
+                }
+            }
+        }
+
+        async function deleteFolder(name) {
+            if (confirm(`Delete folder '${name}'? All files will be moved to 'Unsorted'.`)) {
+                // Move tracks to Unsorted
+                await db.tracks.where('folderName').equals(name).modify({ folderName: 'Unsorted' });
+                // Delete folder
+                await db.folders.where('name').equals(name).delete();
+
+                // If currently viewing deleted folder, switch to all
+                if (currentFilter.type === 'folder' && currentFilter.value === name) {
+                    renderAll();
+                } else {
+                    updateSidebar();
+                    if (currentFilter.type === 'all') renderAll();
+                }
+                showToast(`Folder '${name}' deleted.`);
+            }
+        }
+
+        // --- Drag and Drop Logic ---
+        function handleDragStart(e, id) {
+            e.dataTransfer.setData('text/plain', id);
+            e.dataTransfer.effectAllowed = 'move';
+        }
+
+        function handleDragOver(e) {
+            e.preventDefault();
+            e.currentTarget.classList.add('border-blue-500', 'bg-blue-50');
+            e.currentTarget.classList.remove('border-transparent');
+        }
+
+        function handleDragLeave(e) {
+            e.currentTarget.classList.remove('border-blue-500', 'bg-blue-50');
+            e.currentTarget.classList.add('border-transparent');
+        }
+
+        async function handleDrop(e, targetFolder) {
+            e.preventDefault();
+            const el = e.currentTarget;
+            el.classList.remove('border-blue-500', 'bg-blue-50');
+            el.classList.add('border-transparent');
+
+            const id = parseInt(e.dataTransfer.getData('text/plain'));
+            if (!id) return;
+
+            const track = await db.tracks.get(id);
+            if (track && track.folderName !== targetFolder) {
+                await db.tracks.update(id, { folderName: targetFolder });
+                showToast(`Moved '${track.title}' to '${targetFolder}'`);
+
+                // Refresh
+                if (currentFolderFilter) {
+                    // If viewing a folder, dragging out removes it from view
+                    filterByFolder(currentFolderFilter);
+                } else {
+                    // If all view, grid doesn't change content but badges do
+                    renderAll();
+                }
+            }
+        }
+
+        // --- 6. Modal & Playback Logic ---
+        async function openModal(id) {
+            selectedTrack = await db.tracks.get(id);
+            if (!selectedTrack) return;
+            isEditing = false;
+
+            const modal = document.getElementById('asset-modal');
+            modal.classList.remove('hidden');
+
+            try {
+                let file;
+                if (selectedTrack.fileHandle) {
+                    file = await selectedTrack.fileHandle.getFile();
+                } else if (selectedTrack.fileBlob) {
+                    file = selectedTrack.fileBlob;
+                }
+
+                if (file) {
+                    audio.src = URL.createObjectURL(file);
+                    audio.load();
+                    document.getElementById('player-controls-modal').classList.remove('hidden');
+
+                    // Init audio context if not already
+                    if (!audioContext) initAudio();
+                } else {
+                    // No audio file attached (Manual Asset)
+                    document.getElementById('player-controls-modal').classList.add('hidden');
+                }
+            } catch (e) {
+                console.error("Lost file access", e);
+                document.getElementById('player-controls-modal').classList.add('hidden');
+            }
+
+            updateModalUI();
+        }
+
+        function closeModal() {
+            audio.pause();
+            isPlaying = false;
+            document.getElementById('asset-modal').classList.add('hidden');
+            selectedTrack = null;
+        }
+
+        function updateModalUI() {
+            if (!selectedTrack) return;
+
+            // Cover
+            const coverCont = document.getElementById('modal-cover-container');
+            coverCont.innerHTML = selectedTrack.cover
+                ? `<img src="${selectedTrack.cover}" class="w-full h-full object-cover">`
+                : `<i data-lucide="music" class="w-24 h-24 text-zinc-400 opacity-20"></i>`;
+
+            // Title section
+            const titleSect = document.getElementById('modal-title-section');
+            if (isEditing) {
+                titleSect.innerHTML = `
+                    <input type="text" id="modal-edit-title" class="text-2xl font-black text-center w-full bg-white border-4 border-blue-500 rounded-[2rem] px-4 py-3 outline-none" value="${selectedTrack.title}" placeholder="Title">
+                    <input type="text" id="modal-edit-artist" class="mt-4 text-center w-full bg-zinc-100 rounded-xl px-4 py-2 text-xs font-bold uppercase tracking-widest outline-none" value="${selectedTrack.artist}" placeholder="Artist">
+                `;
+            } else {
+                titleSect.innerHTML = `
+                    <h3 class="text-3xl font-black mb-2 tracking-tighter truncate">${selectedTrack.title}</h3>
+                    <div class="flex items-center justify-center space-x-2 opacity-50">
+                        <i data-lucide="mic-2" class="w-4 h-4 text-blue-500"></i>
+                        <p class="text-xs font-black uppercase tracking-[0.2em]">${selectedTrack.artist || 'Unknown Artist'}</p>
+                    </div>
+                `;
+            }
+
+            // Edit Inputs
+            setupTextarea('edit-prompt', selectedTrack.prompt, isEditing);
+            setupTextarea('edit-lyrics', selectedTrack.lyrics, isEditing);
+            setupTextarea('edit-memo', selectedTrack.memo, isEditing);
+
+            // Tags Display (Custom Tags) in Context Section
+            const tagContainer = document.getElementById('tag-display');
+            // Ensure tags array exists
+            if (!selectedTrack.tags) selectedTrack.tags = [];
+
+            tagContainer.innerHTML = `
+                <div class="flex flex-wrap gap-3">
+                    ${selectedTrack.tags.map(t => `
+                        <div class="flex items-center bg-zinc-100 px-6 py-3 rounded-2xl border border-zinc-200 shadow-sm transition-all hover:bg-white hover:shadow-md">
+                            <span class="text-sm font-black text-blue-600">#${t}</span>
+                            ${isEditing ? `<button onclick="removeTag('${t}')" class="ml-4 text-zinc-300 hover:text-red-500"><i data-lucide="minus-circle" class="w-4 h-4"></i></button>` : ''}
+                        </div>
+                    `).join('')}
+                    ${selectedTrack.tags.length === 0 && !isEditing ? '<span class="text-zinc-400 italic">No custom tags attached.</span>' : ''}
+                </div>
+            `;
+
+            // Toggle Tag Input
+            const tagInput = document.getElementById('tag-input');
+            if (isEditing) {
+                tagInput.classList.remove('hidden');
+                // Removed auto-clear here to prevent wiping text on re-render 
+            } else {
+                tagInput.classList.add('hidden');
+            }
+
+
+            // Edit Grid
+            const editGrid = document.getElementById('modal-edit-grid');
+            editGrid.className = isEditing ? 'grid grid-cols-1 md:grid-cols-3 gap-4 mb-10' : 'hidden';
+            if (isEditing) {
+                editGrid.innerHTML = `
+                    <div class="p-5 bg-zinc-50 rounded-[2rem] border border-zinc-100">
+                        <p class="text-[9px] font-black text-zinc-400 uppercase mb-2">Genre</p>
+                        <input id="edit-genre" class="bg-white border-b-2 border-blue-500 w-full font-bold text-xs outline-none py-1" value="${selectedTrack.genre}">
+                    </div>
+                    <div class="p-5 bg-zinc-50 rounded-[2rem] border border-zinc-100">
+                        <p class="text-[9px] font-black text-zinc-400 uppercase mb-2">BPM</p>
+                        <input id="edit-bpm" class="bg-white border-b-2 border-blue-500 w-full font-bold text-xs outline-none py-1" value="${selectedTrack.bpm}">
+                    </div>
+                    <div class="p-5 bg-zinc-50 rounded-[2rem] border border-zinc-100">
+                        <p class="text-[9px] font-black text-zinc-400 uppercase mb-2">Key</p>
+                        <input id="edit-key" class="bg-white border-b-2 border-blue-500 w-full font-bold text-xs outline-none py-1" value="${selectedTrack.key}">
+                    </div>
+                 `;
+            }
+
+            // Button State
+            const btn = document.getElementById('edit-save-toggle');
+            btn.className = `w-full py-5 rounded-[2.5rem] font-black flex items-center justify-center space-x-3 active:scale-95 transition-all shadow-xl ${isEditing ? 'bg-emerald-600 text-white' : 'bg-zinc-900 text-white'}`;
+            btn.innerHTML = isEditing ? `<i data-lucide="check" class="w-6 h-6"></i> <span class="text-lg">Save Changes</span>` : `<i data-lucide="edit-3" class="w-6 h-6"></i> <span class="text-lg">Edit Metadata</span>`;
+
+            // Player Icon Update (Safe check)
+            updatePlayIconState();
+
+            lucide.createIcons();
+        }
+
+        function setupTextarea(id, val, editable) {
+            const el = document.getElementById(id);
+            el.value = val || "";
+            el.readOnly = !editable;
+            if (editable) {
+                el.classList.add('bg-white', 'border-2', 'border-blue-500', 'shadow-md');
+                el.classList.remove('bg-transparent', 'border-none', 'cursor-default');
+                if (id === 'edit-lyrics') el.classList.remove('bg-zinc-900', 'text-zinc-100');
+            } else {
+                el.classList.remove('bg-white', 'border-2', 'border-blue-500', 'shadow-md');
+                el.classList.add('bg-transparent', 'border-none', 'cursor-default');
+                if (id === 'edit-lyrics') el.classList.add('bg-zinc-900', 'text-zinc-100');
+            }
+        }
+
+        // --- Custom Tag Logic ---
+        function handleAddTag(e) {
+            // Fix for IME (Korean): Do not trigger on composition events
+            if (e.isComposing || e.keyCode === 229) return;
+
+            if (e.key === 'Enter') {
+                e.preventDefault(); // Stop default form submit if any
+                const val = e.target.value.trim();
+
+                if (val && !selectedTrack.tags.includes(val)) {
+                    selectedTrack.tags.push(val);
+                    e.target.value = '';
+
+                    // Efficiently update ONLY the tag display, not the whole modal
+                    renderTagsOnly();
+                }
+            }
+        }
+
+        function removeTag(tag) {
+            selectedTrack.tags = selectedTrack.tags.filter(t => t !== tag);
+            renderTagsOnly();
+        }
+
+        function renderTagsOnly() {
+            const tagContainer = document.getElementById('tag-display');
+            if (!tagContainer) return;
+
+            tagContainer.innerHTML = `
+                <div class="flex flex-wrap gap-3">
+                    ${selectedTrack.tags.map(t => `
+                        <div class="flex items-center bg-zinc-100 px-6 py-3 rounded-2xl border border-zinc-200 shadow-sm transition-all hover:bg-white hover:shadow-md">
+                            <span class="text-sm font-black text-blue-600">#${t}</span>
+                            ${isEditing ? `<button onclick="removeTag('${t}')" class="ml-4 text-zinc-300 hover:text-red-500"><i data-lucide="minus-circle" class="w-4 h-4"></i></button>` : ''}
+                        </div>
+                    `).join('')}
+                    ${selectedTrack.tags.length === 0 && !isEditing ? '<span class="text-zinc-400 italic">No custom tags attached.</span>' : ''}
+                </div>
+            `;
+            lucide.createIcons();
+        }
+
+        async function toggleEditMode() {
+            if (isEditing) {
+                // Save logic
+                const updates = {
+                    title: document.getElementById('modal-edit-title').value,
+                    artist: document.getElementById('modal-edit-artist').value,
+                    genre: document.getElementById('edit-genre').value,
+                    bpm: document.getElementById('edit-bpm').value,
+                    key: document.getElementById('edit-key').value,
+                    prompt: document.getElementById('edit-prompt').value,
+                    lyrics: document.getElementById('edit-lyrics').value,
+                    memo: document.getElementById('edit-memo').value,
+                    tags: selectedTrack.tags // Save edited tags array
+                };
+
+                await db.tracks.update(selectedTrack.id, updates);
+                // Refresh local object
+                Object.assign(selectedTrack, updates);
+
+                showToast("Saved successfully!");
+                renderAll(); // Refresh grid titles
+            } else {
+                // Entering Edit Mode
+                const ti = document.getElementById('tag-input');
+                if (ti) ti.value = '';
+            }
+            isEditing = !isEditing;
+            updateModalUI();
+        }
+
+        function showToast(msg) {
+            const toast = document.getElementById('toast');
+            document.getElementById('toast-message').textContent = msg;
+            toast.classList.remove('translate-y-20', 'opacity-0');
+            setTimeout(() => {
+                toast.classList.add('translate-y-20', 'opacity-0');
+            }, 3000);
+        }
+
+        // --- Audio Logic ---
+        let isLooping = false;
+
+        function togglePlay() {
+            if (audio.paused) {
+                audio.play();
+                isPlaying = true;
+            } else {
+                audio.pause();
+                isPlaying = false;
+            }
+            updatePlayIconState();
+        }
+
+        function toggleLoop() {
+            isLooping = !isLooping;
+            audio.loop = isLooping;
+            const loopBtn = document.getElementById('btn-loop');
+            if (isLooping) {
+                loopBtn.classList.add('text-blue-500', 'bg-blue-50');
+                loopBtn.classList.remove('text-zinc-400');
+            } else {
+                loopBtn.classList.remove('text-blue-500', 'bg-blue-50');
+                loopBtn.classList.add('text-zinc-400');
+            }
+        }
+
+        function updatePlayIconState() {
+            const icon = document.getElementById('modal-play-icon');
+            if (!icon) return;
+
+            if (!audio.paused) {
+                icon.parentElement.innerHTML = `
+                    <i data-lucide="pause" class="w-6 h-6 fill-current"></i>
+                    <span class="text-lg tracking-tight uppercase ml-4">Pause</span>
+                    <button id="btn-loop" onclick="event.stopPropagation(); toggleLoop()" class="ml-auto p-2 rounded-full hover:bg-zinc-800 transition-colors ${isLooping ? 'text-blue-500' : 'text-zinc-500'}" title="Loop Track">
+                        <i data-lucide="repeat" class="w-5 h-5"></i>
+                    </button>
+                `;
+            } else {
+                icon.parentElement.innerHTML = `
+                    <i data-lucide="play" class="w-6 h-6 fill-current"></i>
+                    <span class="text-lg tracking-tight uppercase ml-4">Play Preview</span>
+                    <button id="btn-loop" onclick="event.stopPropagation(); toggleLoop()" class="ml-auto p-2 rounded-full hover:bg-zinc-800 transition-colors ${isLooping ? 'text-blue-500' : 'text-zinc-500'}" title="Loop Track">
+                        <i data-lucide="repeat" class="w-5 h-5"></i>
+                    </button>
+                `;
+            }
+            lucide.createIcons();
+        }
+
+        audio.onplay = () => { isPlaying = true; updatePlayIconState(); };
+        audio.onpause = () => { isPlaying = false; updatePlayIconState(); };
+        audio.onended = () => {
+            isPlaying = false;
+            updatePlayIconState();
+        };
+
+        audio.ontimeupdate = () => {
+            const pct = (audio.currentTime / audio.duration) * 100;
+            document.getElementById('modal-progress').style.width = pct + '%';
+            document.getElementById('modal-time').textContent = formatTime(audio.currentTime);
+            document.getElementById('modal-duration').textContent = formatTime(audio.duration || 0);
+        };
+
+        function formatTime(s) {
+            const m = Math.floor(s / 60);
+            const sec = Math.floor(s % 60);
+            return `${m}:${sec.toString().padStart(2, '0')}`;
+        }
+
+        function seekAudio(e) {
+            const rect = e.currentTarget.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const pct = x / rect.width;
+            audio.currentTime = pct * audio.duration;
+        }
+
+        // --- 6. Import Tools ---
+        async function addManualAsset() {
+            const id = await db.tracks.add({
+                fileHandle: null,
+                title: "New Project",
+                artist: "Unknown Persona",
+                album: "",
+                genre: "Unsorted",
+                folderName: "Unsorted",
+                cover: null,
+                prompt: "",
+                lyrics: "",
+                memo: "",
+                tags: [],
+                bpm: "---",
+                key: "---",
+                addedAt: new Date().toISOString().split('T')[0]
+            });
+            showToast("Created manual asset.");
+            renderAll();
+            openModal(id);
+        }
+
+        async function handleSingleUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const tags = await readTags(file);
+            await db.tracks.add({
+                fileHandle: null,
+                fileBlob: file, // Store actual blob for playback
+                title: tags.title || file.name.replace(/\.[^/.]+$/, ""),
+                artist: tags.artist || "Unknown Artist",
+                album: tags.album || "",
+                genre: tags.genre || "",
+                folderName: "Unsorted",
+                cover: tags.picture,
+                prompt: "",
+                lyrics: "",
+                memo: "",
+                tags: [],
+                bpm: "---",
+                key: "---",
+                addedAt: new Date().toISOString().split('T')[0]
+            });
+
+            showToast("File uploaded to Unsorted.");
+            renderAll();
+            event.target.value = '';
+        }
+
+        async function handleModalUpload(event) {
+            const file = event.target.files[0];
+            if (!file || !selectedTrack) return;
+
+            // Persist as blob
+            const updates = {
+                fileBlob: file,
+                fileHandle: null // Clear handle if replacing with blob
+            };
+
+            // Optional: Update metadata from new file if current is empty?
+            // For now, just update audio
+
+            await db.tracks.update(selectedTrack.id, updates);
+            Object.assign(selectedTrack, updates);
+
+            showToast("Audio attached successfully.");
+
+            // update player
+            audio.src = URL.createObjectURL(file);
+            audio.load();
+            document.getElementById('player-controls-modal').classList.remove('hidden');
+
+            // refresh grid to show "attached" icon if needed
+            renderAll();
+        }
+
+    </script>
+</body>
+
+</html>

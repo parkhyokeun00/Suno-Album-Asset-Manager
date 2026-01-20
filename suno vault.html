@@ -1,0 +1,919 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Suno Album Asset Manager</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- jsmediatags for ID3 Metadata -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(100, 100, 100, 0.2);
+            border-radius: 20px;
+        }
+
+        input[type="range"] {
+            -webkit-appearance: none;
+            background: #e4e4e7;
+            border-radius: 10px;
+            height: 6px;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 18px;
+            width: 18px;
+            border-radius: 50%;
+            background: #2563eb;
+            cursor: pointer;
+            border: 3px solid white;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .animate-bounce-slow {
+            animation: bounce 2s infinite;
+        }
+
+        @keyframes bounce {
+
+            0%,
+            100% {
+                transform: translateY(-5%);
+            }
+
+            50% {
+                transform: translateY(0);
+            }
+        }
+    </style>
+</head>
+
+<body class="bg-zinc-50 text-zinc-900 overflow-hidden">
+
+    <div class="flex h-screen w-full">
+        <!-- Sidebar (사이드바) -->
+        <aside class="w-80 border-r border-zinc-200 bg-white flex flex-col z-20 shadow-xl">
+            <div class="p-10">
+                <div class="flex items-center space-x-4">
+                    <div
+                        class="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-500/30">
+                        <i data-lucide="music" class="w-7 h-7 text-white"></i>
+                    </div>
+                    <div>
+                        <h1 class="font-black text-2xl tracking-tighter leading-none">SUNO</h1>
+                        <p class="text-[9px] font-black text-blue-600 uppercase tracking-[0.3em]">Vault</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex-1 px-4 overflow-y-auto custom-scrollbar">
+                <button onclick="setTab('all')" id="tab-all"
+                    class="w-full flex items-center space-x-4 px-6 py-5 rounded-2xl transition-all mb-8 bg-zinc-900 text-white shadow-xl">
+                    <i data-lucide="database" class="w-5 h-5"></i>
+                    <span class="font-black text-sm uppercase tracking-wide">모든 에셋</span>
+                </button>
+
+                <div
+                    class="flex items-center justify-between px-6 mb-4 font-black text-xs uppercase tracking-widest text-zinc-400">
+                    <span>Folders</span>
+                    <button onclick="addFolder()" class="hover:text-blue-600 transition-colors">
+                        <i data-lucide="folder-plus" class="w-5 h-5"></i>
+                    </button>
+                </div>
+
+                <div id="folder-list" class="space-y-1 mb-10">
+                    <!-- 폴더 리스트 동적 생성 -->
+                </div>
+            </div>
+
+            <div class="p-6 bg-zinc-50 border-t border-zinc-100 space-y-3">
+                <input type="file" id="main-upload" class="hidden" accept="audio/*" onchange="handleMainUpload(event)">
+                <button onclick="document.getElementById('main-upload').click()"
+                    class="w-full flex items-center justify-center space-x-3 px-5 py-4 rounded-2xl bg-zinc-100 text-zinc-900 text-xs font-black uppercase tracking-widest hover:bg-zinc-200 transition-all">
+                    <i data-lucide="upload" class="w-4 h-4"></i>
+                    <span>Quick Upload</span>
+                </button>
+                <button onclick="addManualAsset()"
+                    class="w-full flex items-center justify-center space-x-3 px-5 py-4 rounded-2xl bg-zinc-900 text-white text-xs font-black uppercase tracking-widest shadow-2xl active:scale-95 transition-all">
+                    <i data-lucide="plus" class="w-5 h-5"></i>
+                    <span>New Asset Card</span>
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main Content (메인 컨텐츠) -->
+        <main class="flex-1 overflow-hidden flex flex-col">
+            <header
+                class="h-28 border-b border-zinc-200 bg-white/80 backdrop-blur-3xl flex items-center justify-between px-12 z-10">
+                <div class="flex items-center space-x-8 flex-1 max-w-2xl">
+                    <div class="relative flex-1 group">
+                        <i data-lucide="search"
+                            class="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-400"></i>
+                        <input type="text" id="search-input" placeholder="제목, 페르소나, 장르 검색..."
+                            class="w-full pl-14 pr-12 py-4 bg-zinc-100 rounded-2xl text-sm font-bold focus:outline-none focus:ring-4 focus:ring-blue-500/10 border-none transition-all shadow-inner"
+                            oninput="handleSearch(this.value)">
+                    </div>
+                </div>
+                <div class="flex items-center space-x-6">
+                    <div class="text-right">
+                        <p class="text-[10px] font-black text-zinc-400 uppercase tracking-widest opacity-50">View Mode
+                        </p>
+                        <p id="current-view-name" class="text-sm font-black text-blue-600 uppercase">All Library</p>
+                    </div>
+                    <div
+                        class="w-12 h-12 rounded-2xl bg-white border border-zinc-200 flex items-center justify-center shadow-sm">
+                        <i data-lucide="settings" class="w-5 h-5 text-zinc-400"></i>
+                    </div>
+                </div>
+            </header>
+
+            <section id="asset-grid"
+                class="flex-1 p-12 overflow-y-auto custom-scrollbar grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-10">
+                <!-- 에셋 그리드 동적 생성 -->
+            </section>
+        </main>
+    </div>
+
+    <!-- Asset Modal (상세 모달) -->
+    <div id="asset-modal"
+        class="fixed inset-0 z-50 hidden flex items-center justify-center p-4 bg-zinc-950/95 backdrop-blur-2xl animate-in fade-in duration-300">
+        <div
+            class="bg-white w-full max-w-7xl max-h-[96vh] rounded-[4.5rem] shadow-2xl overflow-hidden flex flex-col md:flex-row border border-zinc-200">
+
+            <!-- Modal Sidebar (Player / 제어바) -->
+            <div
+                class="w-full md:w-[420px] bg-zinc-50 p-12 border-r border-zinc-100 flex flex-col items-center shrink-0">
+                <div class="w-full flex justify-between mb-8">
+                    <span id="modal-version"
+                        class="text-[10px] font-black px-4 py-1.5 bg-zinc-900 text-white rounded-full tracking-widest uppercase">V3.5</span>
+                    <button onclick="closeModal()" class="md:hidden p-2 text-zinc-400"><i data-lucide="x"></i></button>
+                </div>
+
+                <div class="flex-1 flex flex-col items-center justify-center w-full space-y-10">
+                    <div id="modal-cover-container"
+                        class="w-72 h-72 rounded-[4.5rem] bg-zinc-200 shadow-2xl flex items-center justify-center relative overflow-hidden transition-all duration-700">
+                        <!-- 커버 이미지 또는 아이콘 -->
+                    </div>
+
+                    <div class="text-center w-full px-4" id="modal-title-section">
+                        <!-- 제목 및 페르소나 출력/입력 -->
+                    </div>
+
+                    <div class="w-full space-y-8">
+                        <div id="player-controls" class="space-y-4 px-2 hidden">
+                            <div class="h-3 bg-zinc-200 rounded-full overflow-hidden relative cursor-pointer"
+                                onclick="seekAudio(event)">
+                                <div id="player-progress" class="absolute top-0 left-0 h-full bg-blue-600"
+                                    style="width: 0%"></div>
+                            </div>
+                            <div class="flex justify-between text-[11px] font-mono font-black text-zinc-500 px-1">
+                                <span id="current-time">0:00</span>
+                                <span id="total-duration">0:00</span>
+                            </div>
+                            <button id="play-pause-btn" onclick="togglePlay()"
+                                class="w-full py-6 rounded-[2.5rem] font-black flex items-center justify-center space-x-4 transition-all bg-zinc-900 text-white active:scale-95 shadow-2xl hover:bg-black">
+                                <i data-lucide="play" class="w-8 h-8 fill-current"></i>
+                                <span class="text-xl tracking-tight uppercase">Play Preview</span>
+                            </button>
+                        </div>
+
+                        <div class="p-10 bg-white rounded-[3.5rem] border border-zinc-100 space-y-8 shadow-inner">
+                            <div class="space-y-4">
+                                <div
+                                    class="flex items-center justify-between text-[10px] font-black text-zinc-400 uppercase tracking-widest">
+                                    <span class="flex items-center tracking-tighter"><i data-lucide="volume-2"
+                                            class="w-4 h-4 mr-3 text-blue-500"></i> Master Gain</span>
+                                    <span id="volume-label">80%</span>
+                                </div>
+                                <input type="range" id="volume-slider" min="0" max="100" value="80"
+                                    class="w-full cursor-pointer" oninput="updateVolume(this.value)">
+                            </div>
+                            <button id="bass-boost-btn" onclick="toggleBassBoost()"
+                                class="w-full py-4 rounded-2xl text-[10px] font-black border-2 transition-all text-zinc-400 border-zinc-100">BASS
+                                BOOST OFF</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 사이드바 하단 버튼 영역 -->
+                <div class="w-full pt-10 border-t border-zinc-100 mt-10 space-y-4">
+                    <div id="modal-upload-section" class="hidden">
+                        <input type="file" id="modal-audio-upload" class="hidden" accept="audio/*"
+                            onchange="handleModalUpload(event)">
+                        <button onclick="document.getElementById('modal-audio-upload').click()"
+                            class="w-full py-6 rounded-[2.5rem] bg-blue-600 text-white font-black flex items-center justify-center space-x-3 shadow-xl active:scale-95 hover:bg-blue-700">
+                            <i data-lucide="upload" class="w-6 h-6"></i> <span>UPLOAD AUDIO</span>
+                        </button>
+                    </div>
+                    <button id="edit-save-toggle" onclick="toggleEditMode()"
+                        class="w-full py-6 rounded-[2.5rem] font-black flex items-center justify-center space-x-3 active:scale-95 transition-all shadow-2xl bg-zinc-900 text-white">
+                        <i data-lucide="edit-3" class="w-7 h-7"></i> <span id="edit-save-text"
+                            class="text-xl uppercase">Edit Asset</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Modal Content (Scrollable 상세 내용) -->
+            <div class="flex-1 overflow-y-auto p-16 custom-scrollbar bg-white relative">
+                <!-- 인라인 닫기 버튼 -->
+                <div class="flex justify-end items-center mb-6">
+                    <button onclick="closeModal()"
+                        class="group flex items-center space-x-3 text-zinc-300 hover:text-zinc-900 transition-all">
+                        <span
+                            class="text-[10px] font-black tracking-widest uppercase opacity-0 group-hover:opacity-100 transition-opacity">Close
+                            Asset</span>
+                        <i data-lucide="x"
+                            class="w-12 h-12 transform group-hover:rotate-90 transition-transform duration-300"></i>
+                    </button>
+                </div>
+
+                <!-- 자동 태그 (보기 모드) -->
+                <div id="modal-auto-tags" class="flex flex-wrap gap-2 mb-8">
+                </div>
+
+                <!-- 편집 그리드 (편집 모드) -->
+                <div id="modal-edit-grid" class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-16 hidden">
+                </div>
+
+                <div class="space-y-16">
+                    <!-- Creation Data 섹션 -->
+                    <section class="bg-zinc-50 p-12 rounded-[5rem] border border-zinc-100 shadow-inner">
+                        <div class="flex items-center mb-10 space-x-5">
+                            <div class="p-4 bg-blue-600 rounded-3xl text-white shadow-xl shadow-blue-600/30"><i
+                                    data-lucide="type" class="w-8 h-8"></i></div>
+                            <h4 class="text-xl font-black text-zinc-900 uppercase tracking-[0.25em]">Creative
+                                Intelligence</h4>
+                        </div>
+                        <div class="space-y-12">
+                            <div>
+                                <p
+                                    class="text-[11px] font-black text-zinc-400 uppercase tracking-widest mb-4 flex items-center px-2">
+                                    <i data-lucide="file-text" class="w-4 h-4 mr-3"></i> Input Prompt
+                                </p>
+                                <textarea id="edit-prompt"
+                                    class="w-full p-10 rounded-[3rem] text-sm italic min-h-[160px] outline-none transition-all leading-relaxed bg-transparent border-none cursor-default text-zinc-500"
+                                    readonly placeholder="Suno Prompt..."></textarea>
+                            </div>
+                            <div>
+                                <p
+                                    class="text-[11px] font-black text-zinc-400 uppercase tracking-widest mb-4 flex items-center px-2">
+                                    <i data-lucide="hash" class="w-4 h-4 mr-3"></i> Written Lyrics
+                                </p>
+                                <textarea id="edit-lyrics"
+                                    class="w-full p-12 font-mono text-lg leading-loose h-[650px] outline-none rounded-[4rem] transition-all bg-zinc-900 text-zinc-100 border border-zinc-800 overflow-y-auto custom-scrollbar shadow-inner"
+                                    readonly placeholder="Lyrics..."></textarea>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Context 섹션 -->
+                    <section class="bg-zinc-50 p-12 rounded-[5rem] border border-zinc-100 shadow-inner">
+                        <div class="flex items-center mb-10 space-x-5">
+                            <div class="p-4 bg-purple-600 rounded-3xl text-white shadow-xl shadow-purple-600/30"><i
+                                    data-lucide="info" class="w-8 h-8"></i></div>
+                            <h4 class="text-xl font-black text-zinc-900 uppercase tracking-[0.25em]">Asset Context</h4>
+                        </div>
+                        <div class="space-y-12">
+                            <div>
+                                <p class="text-[11px] font-black text-zinc-400 uppercase tracking-widest mb-4 px-2">Tags
+                                </p>
+                                <div id="tag-display"
+                                    class="p-8 bg-white rounded-[3rem] border border-zinc-100 shadow-sm min-h-[120px]">
+                                    <!-- 태그 동적 생성 -->
+                                </div>
+                                <input type="text" id="tag-input" placeholder="새 태그 입력 후 Enter..."
+                                    class="w-full py-3 bg-transparent border-none outline-none text-base font-bold text-blue-500 placeholder:text-zinc-400 hidden px-8 mt-4 border-b-2 border-zinc-100 focus:border-blue-500 transition-all"
+                                    onkeydown="handleAddTag(event)">
+                            </div>
+                            <div>
+                                <p
+                                    class="text-[11px] font-black text-zinc-400 uppercase tracking-widest mb-4 flex items-center px-2">
+                                    <i data-lucide="file-text" class="w-4 h-4 mr-3"></i> Internal Memos
+                                </p>
+                                <textarea id="edit-memo"
+                                    class="w-full p-12 rounded-[4rem] text-lg min-h-[250px] outline-none transition-all leading-relaxed bg-transparent border-none cursor-default"
+                                    readonly placeholder="Notes and thoughts..."></textarea>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification Toast -->
+    <div id="toast"
+        class="fixed bottom-10 right-10 z-[100] transform translate-y-20 opacity-0 transition-all duration-500 bg-zinc-900 text-white px-8 py-4 rounded-2xl font-bold shadow-2xl flex items-center space-x-3">
+        <i data-lucide="info" class="w-5 h-5 text-blue-500"></i>
+        <span id="toast-message">알림 메시지</span>
+    </div>
+
+    <script>
+        // --- 상수 데이터를 상단에 배치하여 초기화 순서 문제 해결 ---
+        const INITIAL_SONGS_DATA = [
+            {
+                id: '1', title: 'Neon Dreams', lyrics: '[Verse 1]\nDigital rain...', prompt: 'Synthwave, 80s...',
+                memo: 'Main title track.', tags: ['Synthwave', '80s'], folder: 'Album 2024',
+                persona: 'Luna-V1', createdAt: '2024-05-18', audioUrl: null, coverUrl: 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?w=400&q=80',
+                meta: { bpm: '120', key: 'Am', genre: 'Synthwave', version: 'v3.5' }
+            }
+        ];
+
+        // --- State Management ---
+        let songs = JSON.parse(localStorage.getItem('suno_songs')) || INITIAL_SONGS_DATA;
+        let folders = JSON.parse(localStorage.getItem('suno_folders')) || ['Album 2024', 'Demos', 'Unsorted'];
+        let activeTab = 'all';
+        let currentFolderName = '';
+        let searchTerm = '';
+        let selectedSong = null;
+        let isEditing = false;
+
+        // --- Audio Engine ---
+        let audio = new Audio();
+        let audioContext, source, bassFilter;
+        let isBassBoosted = false;
+
+        function initAudio() {
+            if (audioContext) return;
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                source = audioContext.createMediaElementSource(audio);
+                bassFilter = audioContext.createBiquadFilter();
+                bassFilter.type = 'lowshelf';
+                bassFilter.frequency.value = 200;
+                bassFilter.gain.value = 0;
+                source.connect(bassFilter);
+                bassFilter.connect(audioContext.destination);
+            } catch (e) {
+                console.warn("Audio Context init failed", e);
+            }
+        }
+
+        // --- Core Functions ---
+        function saveToLocal() {
+            localStorage.setItem('suno_songs', JSON.stringify(songs));
+            localStorage.setItem('suno_folders', JSON.stringify(folders));
+        }
+
+        function showToast(msg) {
+            const toast = document.getElementById('toast');
+            document.getElementById('toast-message').textContent = msg;
+            toast.classList.remove('translate-y-20', 'opacity-0');
+            setTimeout(() => {
+                toast.classList.add('translate-y-20', 'opacity-0');
+            }, 3000);
+        }
+
+        function renderFolders() {
+            const list = document.getElementById('folder-list');
+            list.innerHTML = '';
+            folders.forEach(f => {
+                const isActive = activeTab === 'folder' && currentFolderName === f;
+                const songCount = songs.filter(s => s.folder === f).length;
+                const div = document.createElement('div');
+                div.className = "group relative";
+                div.innerHTML = `
+                    <div 
+                        onclick="setTab('folder', '${f}')" 
+                        ondragover="handleDragOver(event)" 
+                        ondragleave="handleDragLeave(event)" 
+                        ondrop="handleDrop(event, '${f}')"
+                        class="flex items-center justify-between px-6 py-4 rounded-2xl cursor-pointer transition-all border-2 border-transparent ${isActive ? 'bg-blue-600 text-white shadow-lg' : 'text-zinc-500 hover:bg-zinc-50'}"
+                    >
+                        <div class="flex items-center space-x-4 overflow-hidden pointer-events-none">
+                            <i data-lucide="folder" class="w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-blue-500'}"></i>
+                            <span class="font-bold text-sm truncate pr-4">${f}</span>
+                        </div>
+                        <div class="flex items-center opacity-0 group-hover:opacity-100 transition-opacity bg-white/10 rounded-lg p-1">
+                            ${f !== 'Unsorted' ? `
+                                <button onclick="event.stopPropagation(); renameFolder('${f}')" class="p-1.5 hover:text-white" title="이름 변경"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i></button>
+                                <button onclick="event.stopPropagation(); deleteFolder('${f}')" class="p-1.5 hover:text-red-400" title="삭제"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                            ` : ''}
+                        </div>
+                        <span class="text-[10px] font-black px-2 py-0.5 rounded-full group-hover:hidden ${isActive ? 'bg-white/20' : 'bg-zinc-100 text-zinc-500'} pointer-events-none">${songCount}</span>
+                    </div>
+                `;
+                list.appendChild(div);
+            });
+            lucide.createIcons();
+        }
+
+        function renderLibrary() {
+            const grid = document.getElementById('asset-grid');
+            grid.innerHTML = '';
+
+            // 수동 추가 카드
+            const addBtn = document.createElement('button');
+            addBtn.onclick = addManualAsset;
+            addBtn.className = "group border-4 border-dashed border-zinc-200 rounded-[3.5rem] p-10 flex flex-col items-center justify-center text-zinc-300 hover:border-blue-500 transition-all bg-white/30";
+            addBtn.innerHTML = `
+                <div class="w-16 h-16 rounded-3xl bg-zinc-100 flex items-center justify-center group-hover:bg-blue-600 group-hover:text-white transition-all mb-4 shadow-inner">
+                    <i data-lucide="file-plus" class="w-8 h-8"></i>
+                </div>
+                <p class="font-black text-sm uppercase tracking-widest group-hover:text-blue-600">새 리포트 카드 추가</p>
+            `;
+            grid.appendChild(addBtn);
+
+            const filtered = songs.filter(s => {
+                const matchSearch = s.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                    s.persona.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                    s.meta.genre.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                    s.tags.some(t => t.toLowerCase().includes(searchTerm.toLowerCase()));
+                const matchFolder = activeTab === 'all' || s.folder === currentFolderName;
+                return matchSearch && matchFolder;
+            });
+
+            filtered.forEach(s => {
+                const card = document.createElement('div');
+                card.onclick = () => openModal(s.id);
+                card.draggable = true;
+                card.ondragstart = (event) => handleDragStart(event, s.id);
+                card.className = "group bg-white p-10 rounded-[4rem] border border-zinc-200 hover:border-blue-500 hover:shadow-2xl hover:shadow-blue-500/10 transition-all duration-500 cursor-pointer relative overflow-hidden active:scale-95";
+                card.innerHTML = `
+                    <div class="flex justify-between items-start mb-8 pointer-events-none">
+                        <div class="flex items-center space-x-5">
+                            <div class="w-16 h-16 bg-zinc-50 rounded-3xl flex items-center justify-center group-hover:ring-4 group-hover:ring-blue-500/20 transition-all overflow-hidden shadow-inner">
+                                ${s.coverUrl ? `<img src="${s.coverUrl}" class="w-full h-full object-cover">` : `<i data-lucide="music" class="w-7 h-7 text-zinc-400 group-hover:text-blue-600"></i>`}
+                            </div>
+                            <div class="max-w-[140px]">
+                                <h3 class="font-black text-xl text-zinc-900 tracking-tight leading-tight truncate">${s.title}</h3>
+                                <div class="flex items-center space-x-1 mt-1 opacity-60">
+                                    <i data-lucide="user" class="w-3 h-3 text-blue-500"></i>
+                                    <p class="text-[10px] text-blue-500 font-black uppercase tracking-widest truncate">${s.persona || "No Persona"}</p>
+                                </div>
+                            </div>
+                        </div>
+                        <button onclick="event.stopPropagation(); deleteSong('${s.id}')" class="pointer-events-auto p-3 text-zinc-200 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
+                            <i data-lucide="trash-2" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+                    <p class="text-xs text-zinc-400 line-clamp-2 italic mb-8 leading-relaxed font-medium min-h-[2.5rem] pointer-events-none">${s.memo || s.prompt || "내용 없음"}</p>
+                    <div class="flex flex-wrap gap-2 mb-8 min-h-[26px] pointer-events-none">
+                        ${s.tags.map(t => `<span class="px-2.5 py-1 bg-zinc-50 rounded-lg text-[9px] font-black text-zinc-400">#${t.toUpperCase()}</span>`).join('')}
+                    </div>
+                    <div class="grid grid-cols-2 gap-4 mb-8 pointer-events-none">
+                        <div class="bg-zinc-50 p-4 rounded-[1.5rem] border border-zinc-100 text-center shadow-sm">
+                            <span class="text-[9px] font-black text-zinc-400 uppercase tracking-widest block mb-1 opacity-60">BPM / KEY</span>
+                            <span class="text-zinc-900 font-mono text-sm font-bold">${s.meta.bpm} · ${s.meta.key}</span>
+                        </div>
+                        <div class="bg-zinc-50 p-4 rounded-[1.5rem] border border-zinc-100 text-center shadow-sm">
+                            <span class="text-[9px] font-black text-zinc-400 uppercase tracking-widest block mb-1 opacity-60">GENRE</span>
+                            <span class="text-zinc-900 font-bold text-[11px] truncate block uppercase">${s.meta.genre}</span>
+                        </div>
+                    </div>
+                    <div class="flex items-center justify-between pt-8 border-t border-zinc-100 pointer-events-none">
+                        <span class="text-[10px] font-black text-zinc-300 italic flex items-center">
+                            ${s.coverUrl ? `<i data-lucide="image" class="w-3 h-3 mr-1"></i> Attached` : ''}
+                        </span>
+                        <div class="flex items-center text-[10px] font-black text-zinc-400 uppercase tracking-widest">
+                            <i data-lucide="clock" class="w-3.5 h-3.5 mr-2 text-blue-500"></i>${s.createdAt}
+                        </div>
+                    </div>
+                `;
+                grid.appendChild(card);
+            });
+            lucide.createIcons();
+        }
+
+        // --- Drag and Drop Logic ---
+        function handleDragStart(e, id) {
+            e.dataTransfer.setData('text/plain', id);
+            e.dataTransfer.effectAllowed = 'move';
+        }
+
+        function handleDragOver(e) {
+            e.preventDefault(); // Necessary to allow dropping
+            e.dataTransfer.dropEffect = 'move';
+            e.currentTarget.classList.add('border-blue-500', 'bg-blue-50');
+            e.currentTarget.classList.remove('border-transparent');
+        }
+
+        function handleDragLeave(e) {
+            e.currentTarget.classList.remove('border-blue-500', 'bg-blue-50');
+            e.currentTarget.classList.add('border-transparent');
+        }
+
+        function handleDrop(e, targetFolder) {
+            e.preventDefault();
+            const folderEl = e.currentTarget;
+            folderEl.classList.remove('border-blue-500', 'bg-blue-50');
+            folderEl.classList.add('border-transparent');
+
+            const id = e.dataTransfer.getData('text/plain');
+            if (!id) return;
+
+            const songIndex = songs.findIndex(s => s.id === id);
+            if (songIndex > -1) {
+                const song = songs[songIndex];
+                if (song.folder !== targetFolder) {
+                    songs[songIndex].folder = targetFolder;
+                    saveToLocal();
+                    renderLibrary(); // Re-render to remove/update if viewing current folder
+                    renderFolders(); // Update counts
+                    showToast(`'${song.title}' moved to '${targetFolder}'`);
+                }
+            }
+        }
+
+        // --- Event Handlers ---
+        function setTab(tab, folder = '') {
+            activeTab = tab;
+            currentFolderName = folder;
+            document.getElementById('current-view-name').textContent = tab === 'all' ? 'All Library' : folder;
+            document.getElementById('tab-all').className = `w-full flex items-center space-x-4 px-6 py-5 rounded-2xl transition-all mb-8 ${tab === 'all' ? 'bg-zinc-900 text-white shadow-xl' : 'text-zinc-500 hover:bg-zinc-100'}`;
+            renderFolders();
+            renderLibrary();
+        }
+
+        function handleSearch(val) {
+            searchTerm = val;
+            renderLibrary();
+        }
+
+        function addFolder() {
+            const name = prompt('새 폴더 이름을 입력하세요:');
+            if (name && !folders.includes(name)) {
+                folders.push(name);
+                saveToLocal();
+                renderFolders();
+                showToast('폴더가 추가되었습니다.');
+            }
+        }
+
+        function renameFolder(oldName) {
+            const newName = prompt('폴더의 새로운 이름을 입력하세요:', oldName);
+            if (!newName || newName === oldName) return;
+            if (folders.includes(newName)) { showToast('이미 존재하는 이름입니다.'); return; }
+
+            folders = folders.map(f => f === oldName ? newName : f);
+            songs = songs.map(s => s.folder === oldName ? { ...s, folder: newName } : s);
+            if (currentFolderName === oldName) currentFolderName = newName;
+
+            saveToLocal();
+            renderFolders();
+            renderLibrary();
+            showToast('폴더 이름이 변경되었습니다.');
+        }
+
+        function deleteFolder(name) {
+            if (!confirm(`'${name}' 폴더를 삭제하시겠습니까? 에셋들은 'Unsorted'로 이동합니다.`)) return;
+            folders = folders.filter(f => f !== name);
+            songs = songs.map(s => s.folder === name ? { ...s, folder: 'Unsorted' } : s);
+            if (currentFolderName === name) setTab('all');
+            saveToLocal();
+            renderFolders();
+            renderLibrary();
+        }
+
+        async function handleMainUpload(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const res = await processFile(file);
+            songs.unshift(res);
+            saveToLocal();
+            openModal(res.id);
+            renderLibrary();
+            renderFolders();
+        }
+
+        async function processFile(file) {
+            return new Promise((resolve) => {
+                const audioUrl = URL.createObjectURL(file);
+                jsmediatags.read(file, {
+                    onSuccess: (tag) => {
+                        const t = tag.tags;
+                        let coverUrl = null;
+                        if (t.picture) {
+                            const { data, format } = t.picture;
+                            let base64String = "";
+                            for (let i = 0; i < data.length; i++) {
+                                base64String += String.fromCharCode(data[i]);
+                            }
+                            coverUrl = `data:${format};base64,${window.btoa(base64String)}`;
+                        }
+                        resolve({
+                            id: Date.now().toString(),
+                            title: t.title || file.name.replace(/\.[^/.]+$/, ""),
+                            persona: t.artist || "",
+                            lyrics: "", prompt: "", memo: t.comment ? t.comment.text : "",
+                            tags: ["Uploaded"], folder: currentFolderName || "Unsorted",
+                            createdAt: new Date().toISOString().split('T')[0],
+                            audioUrl, coverUrl,
+                            meta: { bpm: '---', key: '---', genre: t.genre || '---', version: 'v1.0' }
+                        });
+                    },
+                    onError: () => resolve({
+                        id: Date.now().toString(),
+                        title: file.name.replace(/\.[^/.]+$/, ""),
+                        persona: "", lyrics: "", prompt: "", memo: "", tags: ["Uploaded"],
+                        folder: currentFolderName || "Unsorted", createdAt: new Date().toISOString().split('T')[0],
+                        audioUrl, coverUrl: null, meta: { bpm: '---', key: '---', genre: '---', version: 'Manual' }
+                    })
+                });
+            });
+        }
+
+        function addManualAsset() {
+            const newSong = {
+                id: Date.now().toString(), title: '새로운 에셋', persona: '',
+                lyrics: "", prompt: "", memo: "", tags: [],
+                folder: currentFolderName || "Unsorted", createdAt: new Date().toISOString().split('T')[0],
+                audioUrl: null, coverUrl: null, meta: { bpm: '---', key: '---', genre: '---', version: 'Manual' }
+            };
+            songs.unshift(newSong);
+            saveToLocal();
+            openModal(newSong.id);
+            renderLibrary();
+            renderFolders();
+        }
+
+        function deleteSong(id) {
+            if (!confirm('에셋을 정말 삭제하시겠습니까?')) return;
+            songs = songs.filter(s => s.id !== id);
+            saveToLocal();
+            renderLibrary();
+            renderFolders();
+        }
+
+        // --- Modal & Editing ---
+        function openModal(id) {
+            selectedSong = songs.find(s => s.id === id);
+            isEditing = selectedSong.title === '새로운 에셋' || !selectedSong.persona;
+
+            const modal = document.getElementById('asset-modal');
+            modal.classList.remove('hidden');
+
+            // Audio Reset
+            if (selectedSong.audioUrl) {
+                audio.src = selectedSong.audioUrl;
+                document.getElementById('player-controls').classList.remove('hidden');
+            } else {
+                audio.src = '';
+                document.getElementById('player-controls').classList.add('hidden');
+            }
+
+            updateModalUI();
+        }
+
+        function closeModal() {
+            audio.pause();
+            document.getElementById('asset-modal').classList.add('hidden');
+            selectedSong = null;
+            isEditing = false;
+        }
+
+        function updateModalUI() {
+            if (!selectedSong) return;
+
+            // Sidebar - Cover
+            const coverCont = document.getElementById('modal-cover-container');
+            if (selectedSong.coverUrl) {
+                coverCont.innerHTML = `<img src="${selectedSong.coverUrl}" class="w-full h-full object-cover">`;
+            } else {
+                coverCont.innerHTML = `<i data-lucide="music" class="w-24 h-24 text-zinc-400 opacity-20"></i>`;
+            }
+
+            // Sidebar - Title & Persona
+            const titleSect = document.getElementById('modal-title-section');
+            if (isEditing) {
+                titleSect.innerHTML = `
+                    <input type="text" id="modal-edit-title" class="text-2xl font-black text-center w-full bg-white border-4 border-blue-500 rounded-[2rem] px-4 py-3 outline-none" value="${selectedSong.title}" placeholder="제목 입력">
+                    <input type="text" id="modal-edit-persona" class="mt-4 text-center w-full bg-zinc-100 rounded-xl px-4 py-2 text-xs font-bold uppercase tracking-widest outline-none" value="${selectedSong.persona}" placeholder="Persona (Singer)">
+                `;
+            } else {
+                titleSect.innerHTML = `
+                    <h3 class="text-3xl font-black mb-2 tracking-tighter truncate">${selectedSong.title}</h3>
+                    <div class="flex items-center justify-center space-x-2 opacity-50">
+                        <i data-lucide="mic-2" class="w-4 h-4 text-blue-500"></i>
+                        <p class="text-xs font-black uppercase tracking-[0.2em]">${selectedSong.persona || 'No Persona'}</p>
+                    </div>
+                `;
+            }
+
+            // Buttons
+            document.getElementById('modal-upload-section').className = isEditing ? 'block animate-in slide-in-from-bottom-2' : 'hidden';
+            const btn = document.getElementById('edit-save-toggle');
+            const btnText = document.getElementById('edit-save-text');
+
+            btn.className = `w-full py-6 rounded-[2.5rem] font-black flex items-center justify-center space-x-3 active:scale-95 transition-all shadow-2xl ${isEditing ? 'bg-emerald-600 text-white' : 'bg-zinc-900 text-white'}`;
+            btn.innerHTML = isEditing ? `<i data-lucide="check" class="w-7 h-7"></i> <span class="text-xl">Save Asset</span>` : `<i data-lucide="edit-3" class="w-7 h-7"></i> <span class="text-xl">Edit Asset</span>`;
+
+            // Content - Auto Tags (보기 모드 전용)
+            const tagContainer = document.getElementById('modal-auto-tags');
+            tagContainer.className = isEditing ? 'hidden' : 'flex flex-wrap gap-2 mb-8';
+            tagContainer.innerHTML = '';
+            if (!isEditing) {
+                const auto = [
+                    { label: 'Persona', v: selectedSong.persona, c: 'text-purple-600 bg-purple-50', i: 'user' },
+                    { label: 'Folder', v: selectedSong.folder, c: 'text-blue-600 bg-blue-50', i: 'folder' },
+                    { label: 'BPM', v: selectedSong.meta.bpm, c: 'text-emerald-600 bg-emerald-50', i: 'activity' },
+                    { label: 'Key', v: selectedSong.meta.key, c: 'text-amber-600 bg-amber-50', i: 'music-2' },
+                    { label: 'Genre', v: selectedSong.meta.genre, c: 'text-rose-600 bg-rose-50', i: 'mic-2' }
+                ];
+                auto.forEach(a => {
+                    if (!a.v || a.v === '---' || a.v === 'Unknown') return;
+                    tagContainer.innerHTML += `<div class="flex items-center px-4 py-2 rounded-full text-[11px] font-black uppercase tracking-wider ${a.c}"><i data-lucide="${a.i}" class="w-3.5 h-3.5 mr-2"></i>${a.v}</div>`;
+                });
+            }
+
+            // Content - Edit Grid (편집 모드 전용)
+            const editGrid = document.getElementById('modal-edit-grid');
+            editGrid.className = isEditing ? 'grid grid-cols-1 md:grid-cols-5 gap-4 mb-16' : 'hidden';
+            if (isEditing) {
+                editGrid.innerHTML = `
+                    <div class="p-6 bg-zinc-50 rounded-[2.5rem] border-2 border-zinc-100 flex flex-col justify-center">
+                        <p class="text-[9px] font-black text-zinc-400 uppercase mb-3">Folder</p>
+                        <select id="edit-folder" class="bg-white border-b-2 border-blue-500 w-full font-bold text-sm outline-none">
+                            ${folders.map(f => `<option value="${f}" ${selectedSong.folder === f ? 'selected' : ''}>${f}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="p-6 bg-zinc-50 rounded-[2.5rem] border-2 border-zinc-100 flex flex-col justify-center">
+                        <p class="text-[9px] font-black text-zinc-400 uppercase mb-3">BPM Rate</p>
+                        <input id="edit-bpm" class="bg-white border-b-2 border-blue-500 w-full font-bold text-sm outline-none" value="${selectedSong.meta.bpm}">
+                    </div>
+                    <div class="p-6 bg-zinc-50 rounded-[2.5rem] border-2 border-zinc-100 flex flex-col justify-center">
+                        <p class="text-[9px] font-black text-zinc-400 uppercase mb-3">Musical Key</p>
+                        <input id="edit-key" class="bg-white border-b-2 border-blue-500 w-full font-bold text-sm outline-none" value="${selectedSong.meta.key}">
+                    </div>
+                    <div class="p-6 bg-zinc-50 rounded-[2.5rem] border-2 border-zinc-100 flex flex-col justify-center">
+                        <p class="text-[9px] font-black text-zinc-400 uppercase mb-3">Genre</p>
+                        <input id="edit-genre" class="bg-white border-b-2 border-blue-500 w-full font-bold text-sm outline-none" value="${selectedSong.meta.genre}">
+                    </div>
+                    <div class="p-6 bg-zinc-50 rounded-[2.5rem] border-2 border-zinc-100 flex flex-col justify-center opacity-50">
+                        <p class="text-[9px] font-black text-zinc-400 uppercase mb-3">Created</p>
+                        <span class="font-bold text-xs">${selectedSong.createdAt}</span>
+                    </div>
+                `;
+            }
+
+            // Textareas (Prompt, Lyrics, Memo)
+            const promptArea = document.getElementById('edit-prompt');
+            promptArea.value = selectedSong.prompt;
+            promptArea.readOnly = !isEditing;
+            promptArea.className = `w-full p-10 rounded-[3rem] text-sm italic min-h-[160px] outline-none transition-all leading-relaxed ${isEditing ? 'bg-white border-2 border-blue-500 shadow-md' : 'bg-transparent border-none cursor-default text-zinc-500'}`;
+
+            const lyricsArea = document.getElementById('edit-lyrics');
+            lyricsArea.value = selectedSong.lyrics;
+            lyricsArea.readOnly = !isEditing;
+            lyricsArea.className = `w-full p-12 font-mono text-lg leading-loose h-[650px] outline-none rounded-[4rem] transition-all shadow-inner ${isEditing ? 'bg-zinc-900 text-blue-400 border-4 border-blue-500/20 shadow-2xl' : 'bg-zinc-900 text-zinc-100 border border-zinc-800 overflow-y-auto custom-scrollbar'}`;
+
+            const memoArea = document.getElementById('edit-memo');
+            memoArea.value = selectedSong.memo;
+            memoArea.readOnly = !isEditing;
+            memoArea.className = `w-full p-12 rounded-[4rem] text-lg min-h-[250px] outline-none transition-all leading-relaxed ${isEditing ? 'bg-white border-2 border-blue-500 shadow-md' : 'bg-transparent border-none cursor-default'}`;
+
+            // Tags display
+            const tagDisp = document.getElementById('tag-display');
+            tagDisp.innerHTML = `
+                <div class="flex flex-wrap gap-3">
+                    ${selectedSong.tags.map(t => `
+                        <div class="flex items-center bg-zinc-100 px-6 py-3 rounded-2xl border border-zinc-200 shadow-sm">
+                            <span class="text-sm font-black text-blue-600">#${t}</span>
+                            ${isEditing ? `<button onclick="removeTag('${t}')" class="ml-4 text-zinc-300 hover:text-red-500"><i data-lucide="minus-circle" class="w-5 h-5"></i></button>` : ''}
+                        </div>
+                    `).join('')}
+                    ${selectedSong.tags.length === 0 && !isEditing ? '<span class="text-zinc-400 italic">No custom tags attached.</span>' : ''}
+                </div>
+            `;
+            document.getElementById('tag-input').classList.toggle('hidden', !isEditing);
+
+            lucide.createIcons();
+        }
+
+        function toggleEditMode() {
+            if (isEditing) {
+                // Save Logic
+                selectedSong.title = document.getElementById('modal-edit-title').value;
+                selectedSong.persona = document.getElementById('modal-edit-persona').value;
+                selectedSong.folder = document.getElementById('edit-folder').value;
+                selectedSong.meta.bpm = document.getElementById('edit-bpm').value;
+                selectedSong.meta.key = document.getElementById('edit-key').value;
+                selectedSong.meta.genre = document.getElementById('edit-genre').value;
+                selectedSong.prompt = document.getElementById('edit-prompt').value;
+                selectedSong.lyrics = document.getElementById('edit-lyrics').value;
+                selectedSong.memo = document.getElementById('edit-memo').value;
+
+                saveToLocal();
+                renderLibrary();
+                renderFolders();
+                showToast('변경사항이 저장되었습니다.');
+            }
+            isEditing = !isEditing;
+            updateModalUI();
+        }
+
+        async function handleModalUpload(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            showToast('파일 분석 중...');
+            const res = await processFile(file);
+            selectedSong.audioUrl = res.audioUrl;
+            selectedSong.coverUrl = res.coverUrl;
+            if (selectedSong.title === '새로운 에셋') selectedSong.title = res.title;
+            selectedSong.persona = res.persona || selectedSong.persona;
+            selectedSong.meta.genre = res.meta.genre || selectedSong.meta.genre;
+            selectedSong.memo = res.memo || selectedSong.memo;
+
+            audio.src = selectedSong.audioUrl;
+            document.getElementById('player-controls').classList.remove('hidden');
+            updateModalUI();
+            showToast('오디오 데이터가 성공적으로 분석되었습니다.');
+        }
+
+        function handleAddTag(e) {
+            if (e.key === 'Enter' && e.target.value.trim()) {
+                const tag = e.target.value.trim().replace(/^#/, '');
+                if (!selectedSong.tags.includes(tag)) {
+                    selectedSong.tags.push(tag);
+                    e.target.value = '';
+                    updateModalUI();
+                }
+            }
+        }
+
+        function removeTag(tag) {
+            selectedSong.tags = selectedSong.tags.filter(t => t !== tag);
+            updateModalUI();
+        }
+
+        // --- Audio Controls ---
+        function togglePlay() {
+            initAudio();
+            const btn = document.getElementById('play-pause-btn');
+            if (audio.paused) {
+                audio.play();
+                btn.innerHTML = `<i data-lucide="pause" class="w-8 h-8 fill-current"></i> <span class="text-xl uppercase">Stop</span>`;
+            } else {
+                audio.pause();
+                btn.innerHTML = `<i data-lucide="play" class="w-8 h-8 fill-current"></i> <span class="text-xl uppercase">Play Preview</span>`;
+            }
+            lucide.createIcons();
+        }
+
+        function updateVolume(val) {
+            audio.volume = val / 100;
+            document.getElementById('volume-label').textContent = `${val}%`;
+        }
+
+        function toggleBassBoost() {
+            initAudio();
+            isBassBoosted = !isBassBoosted;
+            if (bassFilter) {
+                bassFilter.gain.setTargetAtTime(isBassBoosted ? 15 : 0, audioContext.currentTime, 0.1);
+            }
+            const btn = document.getElementById('bass-boost-btn');
+            btn.textContent = isBassBoosted ? 'BASS BOOST ENABLED' : 'BASS BOOST OFF';
+            btn.className = `w-full py-4 rounded-2xl text-[10px] font-black border-2 transition-all ${isBassBoosted ? 'bg-blue-600 text-white border-blue-600 shadow-lg shadow-blue-500/20' : 'text-zinc-400 border-zinc-100'}`;
+        }
+
+        function seekAudio(e) {
+            if (!audio.duration) return;
+            const rect = e.currentTarget.getBoundingClientRect();
+            const pos = (e.clientX - rect.left) / rect.width;
+            audio.currentTime = pos * audio.duration;
+        }
+
+        audio.ontimeupdate = () => {
+            const prog = (audio.currentTime / audio.duration) * 100;
+            const bar = document.getElementById('player-progress');
+            if (bar) bar.style.width = `${prog}%`;
+
+            document.getElementById('current-time').textContent = formatTime(audio.currentTime);
+            document.getElementById('total-duration').textContent = formatTime(audio.duration || 0);
+        };
+
+        function formatTime(t) {
+            const m = Math.floor(t / 60);
+            const s = Math.floor(t % 60);
+            return `${m}:${s < 10 ? '0' : ''}${s}`;
+        }
+
+        // --- Init ---
+        window.onload = () => {
+            renderFolders();
+            renderLibrary();
+            lucide.createIcons();
+        };
+    </script>
+</body>
+
+</html>
