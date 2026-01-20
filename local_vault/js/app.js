@@ -7,7 +7,10 @@ const State = {
     currentView: 'all', // 'all' or folder name
     searchTerm: '',
     playingId: null,
-    isEditing: false
+    playingMetadata: null, // Song object of currently open modal
+    isEditing: false,
+    playlist: [], // Playlist for sequential playback
+    playlistIndex: -1
 };
 
 // Utils
@@ -171,11 +174,116 @@ function isAudioFile(name) {
     return /\.(mp3|wav|ogg|m4a)$/i.test(name);
 }
 
+// --- Audio Visualizer ---
+const Visualizer = {
+    ctx: null,
+    analyser: null,
+    source: null,
+    dataArray: null,
+    canvases: [], // Array of { el, ctx }
+    animationId: null,
+    isInit: false,
+
+    init(audioElement) {
+        if (this.isInit) return;
+
+        try {
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            this.ctx = new AudioContext();
+            this.analyser = this.ctx.createAnalyser();
+            this.analyser.fftSize = 64; // Low resolution for bars
+
+            // Connect
+            this.source = this.ctx.createMediaElementSource(audioElement);
+            this.source.connect(this.analyser);
+            this.analyser.connect(this.ctx.destination);
+
+            this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+
+            // Register Canvases
+            this.addCanvas('audio-visualizer'); // Footer
+            this.addCanvas('audio-visualizer-modal'); // Modal
+
+            this.isInit = true;
+            this.draw();
+        } catch (e) {
+            console.warn("Web Audio API init failed", e);
+        }
+    },
+
+    addCanvas(id) {
+        const c = document.getElementById(id);
+        if (c) {
+            this.canvases.push({
+                el: c,
+                ctx: c.getContext('2d')
+            });
+        }
+    },
+
+    draw() {
+        this.animationId = requestAnimationFrame(() => this.draw());
+        if (this.canvases.length === 0) return;
+
+        const bufferLength = this.analyser.frequencyBinCount;
+        this.analyser.getByteFrequencyData(this.dataArray);
+
+        // Draw to all registered canvases
+        this.canvases.forEach(target => {
+            const w = target.el.width;
+            const h = target.el.height;
+            const ctx = target.ctx;
+
+            ctx.clearRect(0, 0, w, h);
+
+            const barWidth = (w / bufferLength) * 2;
+            let x = 0;
+
+            // LED Style Config
+            const segmentHeight = 3;
+            const gap = 1;
+
+            for (let i = 0; i < bufferLength; i++) {
+                const barHeight = (this.dataArray[i] / 255) * h;
+                const segments = Math.floor(barHeight / (segmentHeight + gap));
+
+                for (let j = 0; j < segments; j++) {
+                    const y = h - (j * (segmentHeight + gap)) - segmentHeight;
+
+                    // Color Gradient (Green -> Yellow -> Red)
+                    const pct = j / (h / (segmentHeight + gap));
+                    let color = '#4ade80'; // Green
+                    if (pct > 0.4) color = '#facc15'; // Yellow
+                    if (pct > 0.7) color = '#f87171'; // Red
+
+                    ctx.fillStyle = color;
+                    ctx.fillRect(x, y, barWidth, segmentHeight);
+                }
+                x += barWidth + 2;
+            }
+        });
+    }
+};
+
 // --- Audio Player ---
 const AudioEngine = {
     el: new Audio(),
 
     init() {
+        this.el.addEventListener('play', () => {
+            if (!Visualizer.isInit) Visualizer.init(this.el);
+            if (Visualizer.ctx && Visualizer.ctx.state === 'suspended') Visualizer.ctx.resume();
+
+            // Ensure Footer is updated even if played from Modal
+            let song = State.songs.find(s => s.id === State.playingId);
+            if (!song && State.playingMetadata) song = State.playingMetadata; // Fallback to modal song
+
+            if (song) {
+                State.playingId = song.id;
+                if (UI.updateFooter) UI.updateFooter(song);
+            }
+        });
+
         this.el.addEventListener('timeupdate', () => {
             const pct = (this.el.currentTime / this.el.duration) * 100;
             const bar = $('#player-progress');
@@ -187,33 +295,104 @@ const AudioEngine = {
             const d = $('#total-duration');
             if (d) d.textContent = formatTime(this.el.duration);
         });
+
+        // Footer Controls - Delay slightly to ensure DOM
+        setTimeout(() => {
+            const fBtn = $('#btn-play-pause-footer');
+            if (fBtn) fBtn.onclick = () => this.toggle();
+            $('#btn-prev').onclick = () => this.playNextPrev(-1);
+            $('#btn-next').onclick = () => this.playNextPrev(1);
+        }, 100);
+
+        // Playlist Auto-Advance
         this.el.addEventListener('ended', () => {
-            $('#play-pause-btn').innerHTML = `<i data-lucide="play" class="w-8 h-8 fill-current"></i><span class="text-xl tracking-tight uppercase">Replay</span>`;
+            if (State.playlist.length > 0 && State.playlistIndex < State.playlist.length - 1) {
+                State.playlistIndex++;
+                this.play(State.playlist[State.playlistIndex]);
+            } else {
+                $('#play-pause-btn').innerHTML = `<i data-lucide="play" class="w-8 h-8 fill-red-600 text-red-600"></i><span class="text-xl tracking-tight uppercase">Replay</span>`;
+                lucide.createIcons();
+            }
         });
     },
 
     async play(song) {
         if (!song.handle) return;
+
+        // Setup Visualizer logic on first play if needed, handled in init 'play' listener
+
         const file = await song.handle.getFile();
         const url = URL.createObjectURL(file);
 
         this.el.src = url;
-        // this.el.play(); // Auto-play disabled by default
+        this.el.play();
         State.playingId = song.id;
 
-        // Update Button State to Play (since we paused auto-play)
+        // If Play All active and modal open, ensure modal content updates if we want?
+        // Actually for now let's just keep playing. 
+        // If the user wants to see the new song they can click it. 
+        // Or we can auto-update modal if open?
+        // Let's auto-update modal Metadata if it is open!
+        if (State.playingMetadata && document.getElementById('asset-modal').classList.contains('hidden') === false) {
+            // Only if playing a *different* song than showed? 
+            // Actually UI.openModal sets State.playingMetadata. 
+            // Let's separate "openModal" from "setModalContent".
+            // For now, simpler: If playing from playlist, we probably want to see it.
+            if (State.playingMetadata.id !== song.id) {
+                UI.openModal(song.id);
+            }
+        }
+
+        // Update Button State to Play
         const btn = $('#play-pause-btn');
-        if (btn) btn.innerHTML = `<i data-lucide="play" class="w-8 h-8 fill-current"></i><span class="text-xl tracking-tight uppercase">Play</span>`;
+        if (btn) {
+            btn.innerHTML = `<i data-lucide="pause" class="w-8 h-8 fill-white text-white"></i><span class="text-xl tracking-tight uppercase">Pause</span>`;
+            lucide.createIcons();
+        }
+    },
+
+    playFolder(folderName) {
+        // Get songs
+        const songs = State.songs.filter(s => {
+            if (folderName === 'all') return true;
+            return s.folder === folderName;
+        }).sort((a, b) => b.id - a.id);
+
+        if (songs.length === 0) {
+            UI.showToast("No songs to play.");
+            return;
+        }
+
+        State.playlist = songs;
+        State.playlistIndex = 0;
+        this.play(State.playlist[0]);
+        UI.showToast(`Playing ${songs.length} tracks...`);
+        // Note: Modal open removed
+    },
+
+    playNextPrev(dir) {
+        if (State.playlist.length === 0) return;
+        let newIdx = State.playlistIndex + dir;
+        if (newIdx >= 0 && newIdx < State.playlist.length) {
+            State.playlistIndex = newIdx;
+            this.play(State.playlist[newIdx]);
+        }
     },
 
     toggle() {
         const btn = $('#play-pause-btn');
         if (this.el.paused) {
             this.el.play();
-            if (btn) btn.innerHTML = `<i data-lucide="pause" class="w-8 h-8 fill-current"></i><span class="text-xl tracking-tight uppercase">Pause</span>`;
+            if (btn) {
+                btn.innerHTML = `<i data-lucide="pause" class="w-8 h-8 fill-white text-white"></i><span class="text-xl tracking-tight uppercase">Pause</span>`;
+                lucide.createIcons();
+            }
         } else {
             this.el.pause();
-            if (btn) btn.innerHTML = `<i data-lucide="play" class="w-8 h-8 fill-current"></i><span class="text-xl tracking-tight uppercase">Play</span>`;
+            if (btn) {
+                btn.innerHTML = `<i data-lucide="play" class="w-8 h-8 fill-red-600 text-red-600"></i><span class="text-xl tracking-tight uppercase">Play</span>`;
+                lucide.createIcons();
+            }
         }
     },
 
@@ -237,6 +416,21 @@ const UI = {
         $('#app-container').classList.remove('opacity-0');
     },
 
+    updateFooter(song) {
+        const footer = $('#footer-player');
+        footer.classList.remove('translate-y-full'); // Show footer
+
+        $('#footer-title').textContent = song.title;
+        $('#footer-artist').textContent = song.persona;
+
+        if (song.coverUrl) {
+            $('#footer-cover').innerHTML = `<img src="${song.coverUrl}" class="w-full h-full object-cover">`;
+        } else {
+            $('#footer-cover').innerHTML = `<i data-lucide="music" class="w-6 h-6 text-zinc-300"></i>`;
+        }
+        lucide.createIcons();
+    },
+
     showToast(msg) {
         const t = $('#toast');
         $('#toast-message').textContent = msg;
@@ -258,12 +452,52 @@ const UI = {
             const isActive = State.currentView === f;
 
             const div = document.createElement('div');
+            // Add Drag-Reorder Support (Folder Draggable)
+            div.draggable = true;
+            div.ondragstart = (e) => {
+                // If dragging a folder, mark type
+                if (e.target === div || div.contains(e.target)) {
+                    e.dataTransfer.setData('type/folder', f);
+                    e.dataTransfer.effectAllowed = 'move';
+                }
+            };
+
             div.className = `group flex items-center justify-between px-6 py-4 rounded-2xl cursor-pointer transition-all border-2 border-transparent ${isActive ? 'bg-blue-600 text-white shadow-lg' : 'text-zinc-500 hover:bg-zinc-50'}`;
             div.onclick = () => {
                 State.currentView = f;
                 $('#current-view-name').textContent = f;
                 $('#tab-all').className = 'w-full flex items-center space-x-4 px-6 py-5 rounded-2xl transition-all mb-8 text-zinc-500 hover:bg-zinc-100'; // reset 'All' tab
                 this.render();
+            };
+
+            // Drop Target Logic (Asset -> Folder AND Folder -> Folder Reorder)
+            div.ondragover = (e) => {
+                e.preventDefault();
+                div.classList.add('border-blue-500', 'bg-blue-50');
+            };
+            div.ondragleave = () => {
+                div.classList.remove('border-blue-500', 'bg-blue-50');
+            };
+            div.ondrop = (e) => {
+                e.preventDefault();
+                div.classList.remove('border-blue-500', 'bg-blue-50');
+
+                // Check if reordering folders
+                const draggedFolder = e.dataTransfer.getData('type/folder');
+                if (draggedFolder && draggedFolder !== f) {
+                    this.reorderFolders(draggedFolder, f);
+                    return;
+                }
+
+                // Else moving song
+                const songId = e.dataTransfer.getData('text/plain');
+                if (songId) UI.moveSongToFolder(songId, f);
+            };
+
+            // Context Menu
+            div.oncontextmenu = (e) => {
+                e.preventDefault();
+                this.showContextMenu(e, f);
             };
 
             div.innerHTML = `
@@ -277,6 +511,101 @@ const UI = {
         });
     },
 
+    // --- Folder Operations ---
+    async createFolder() {
+        const name = prompt("Enter new folder name:");
+        if (name && !State.folders.includes(name)) {
+            State.folders.push(name);
+            await FS.saveVault();
+            this.render();
+            this.showToast(`Folder '${name}' created.`);
+        } else if (name && State.folders.includes(name)) {
+            this.showToast("Folder already exists.");
+        }
+    },
+
+    async reorderFolders(src, dest) {
+        const oldIdx = State.folders.indexOf(src);
+        const newIdx = State.folders.indexOf(dest);
+        if (oldIdx > -1 && newIdx > -1) {
+            State.folders.splice(oldIdx, 1);
+            State.folders.splice(newIdx, 0, src);
+            await FS.saveVault();
+            this.render();
+            this.showToast(`Folder '${src}' reordered.`);
+        }
+    },
+
+    showContextMenu(e, folder) {
+        const menu = $('#ctx-menu');
+        menu.style.left = `${e.clientX}px`;
+        menu.style.top = `${e.clientY}px`;
+        menu.classList.remove('hidden');
+
+        // Handlers
+        $('#ctx-rename').onclick = async () => {
+            menu.classList.add('hidden');
+            const newName = prompt("Rename folder:", folder);
+            if (newName && newName !== folder && !State.folders.includes(newName)) {
+                // Update folder list
+                const idx = State.folders.indexOf(folder);
+                State.folders[idx] = newName;
+                // Update songs
+                State.songs.forEach(s => {
+                    if (s.folder === folder) s.folder = newName;
+                });
+
+                // If viewing this folder, update view
+                if (State.currentView === folder) {
+                    State.currentView = newName;
+                    $('#current-view-name').textContent = newName;
+                }
+
+                await FS.saveVault();
+                this.render();
+                this.showToast("Folder renamed.");
+            } else if (newName && newName === folder) {
+                this.showToast("Folder name is the same.");
+            } else if (newName && State.folders.includes(newName)) {
+                this.showToast("Folder with that name already exists.");
+            }
+        };
+
+        $('#ctx-delete').onclick = async () => {
+            menu.classList.add('hidden');
+            if (folder === 'Unsorted') {
+                alert("Cannot delete 'Unsorted' folder.");
+                return;
+            }
+            if (confirm(`Delete folder "${folder}"? Assets will be moved to Unsorted.`)) {
+                // Move songs
+                State.songs.forEach(s => {
+                    if (s.folder === folder) s.folder = "Unsorted";
+                });
+                // Remove folder
+                State.folders = State.folders.filter(x => x !== folder);
+
+                // Reset view if needed
+                if (State.currentView === folder) {
+                    State.currentView = 'Unsorted';
+                    $('#current-view-name').textContent = 'Unsorted';
+                }
+
+                await FS.saveVault();
+                this.render();
+                this.showToast("Folder deleted.");
+            }
+        };
+
+        // Hide on click elsewhere
+        const closer = () => {
+            menu.classList.add('hidden');
+            window.removeEventListener('click', closer);
+        };
+        setTimeout(() => window.addEventListener('click', closer), 10);
+    },
+    // -------------------------
+
     renderGrid() {
         const grid = $('#asset-grid');
         grid.innerHTML = '';
@@ -285,13 +614,19 @@ const UI = {
             if (State.currentView !== 'all' && s.folder !== State.currentView) return false;
             if (State.searchTerm) {
                 const q = State.searchTerm.toLowerCase();
-                return s.title.toLowerCase().includes(q) || s.persona.toLowerCase().includes(q);
+                return s.title.toLowerCase().includes(q) || s.persona.toLowerCase().includes(q) || s.tags.some(t => t.toLowerCase().includes(q));
             }
             return true;
         });
 
         filtered.forEach(s => {
             const el = document.createElement('div');
+            el.draggable = true;
+            el.ondragstart = (e) => {
+                e.dataTransfer.setData('text/plain', s.id);
+                e.dataTransfer.effectAllowed = 'move';
+            };
+
             el.className = "group bg-white p-8 rounded-[3rem] border border-zinc-200 hover:border-blue-500 hover:shadow-2xl hover:shadow-blue-500/10 transition-all duration-300 cursor-pointer relative overflow-hidden active:scale-95";
             el.onclick = () => this.openModal(s.id);
 
@@ -310,13 +645,23 @@ const UI = {
                         </div>
                     </div>
                 </div>
-                <div class="flex flex-wrap gap-2 mt-auto">
-                     <span class="px-3 py-1 bg-zinc-50 rounded-lg text-[9px] font-black text-zinc-400 uppercase tracking-wider border border-zinc-100">${s.meta.bpm || '---'} BPM</span>
-                     <span class="px-3 py-1 bg-zinc-50 rounded-lg text-[9px] font-black text-zinc-400 uppercase tracking-wider border border-zinc-100">${s.meta.key || '---'}</span>
+                <div class="flex flex-wrap gap-2 mt-auto text-[9px] font-black text-zinc-400 uppercase tracking-wider pointer-events-none">
+                     <span class="px-3 py-1 bg-zinc-50 rounded-lg border border-zinc-100">${s.meta.bpm || '---'} BPM</span>
+                     <span class="px-3 py-1 bg-zinc-50 rounded-lg border border-zinc-100">${s.meta.key || '---'}</span>
                 </div>
             `;
             grid.appendChild(el);
         });
+    },
+
+    moveSongToFolder(id, folder) {
+        const s = State.songs.find(x => x.id === id);
+        if (s && s.folder !== folder) {
+            s.folder = folder;
+            FS.saveVault();
+            this.render();
+            this.showToast(`Moved to ${folder}`);
+        }
     },
 
     async openModal(id) {
@@ -351,10 +696,24 @@ const UI = {
 
         // Prepare audio (No Auto Play)
         if (s.handle) {
-            const file = await s.handle.getFile();
-            const url = URL.createObjectURL(file);
-            AudioEngine.el.src = url;
-            $('#play-pause-btn').innerHTML = `<i data-lucide="play" class="w-8 h-8 fill-current"></i><span class="text-xl tracking-tight uppercase">Play</span>`;
+            // Check if we are already playing this song (e.g. from playlist)
+            if (State.playingId !== s.id) {
+                // New song selection from Modal: Clear playlist context to prevent auto-advance
+                State.playlist = [];
+                State.playlistIndex = -1;
+
+                const file = await s.handle.getFile();
+                const url = URL.createObjectURL(file);
+                AudioEngine.el.src = url;
+
+                // Reset Main Play Button (since new source is paused)
+                $('#play-pause-btn').innerHTML = `<i data-lucide="play" class="w-8 h-8 fill-red-600 text-red-600"></i><span class="text-xl tracking-tight uppercase">Play</span>`;
+                lucide.createIcons();
+            } else {
+                // Already playing this song (e.g. opened modal while playlist running)
+                // Just sync button state
+                AudioEngine.updateButtonState(AudioEngine.el.paused ? 'play' : 'pause');
+            }
         }
     },
 
@@ -544,6 +903,8 @@ const UI = {
 // --- Events ---
 $('#btn-open-vault').onclick = () => FS.openVault();
 $('#btn-refresh').onclick = () => FS.scanVault(true);
+$('#btn-add-folder').onclick = () => UI.createFolder();
+$('#btn-play-folder').onclick = () => AudioEngine.playFolder(State.currentView);
 $('#search-input').oninput = (e) => {
     State.searchTerm = e.target.value;
     UI.render();
@@ -578,6 +939,12 @@ AudioEngine.init();
 // Export for debugging
 window.VaultApp = {
     State, FS, UI, AudioEngine, closeModal: UI.closeModal
+};
+
+// Privacy Policy
+$('#link-privacy').onclick = (e) => {
+    e.preventDefault();
+    alert("Privacy Policy:\n\nSuno Local Vault is a generic local-first application.\nAll data (music, metadata, vault.json) is stored exclusively on your local device.\nNo data is transmitted to any external servers.");
 };
 
 // --- ID3 Helper ---
