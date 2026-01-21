@@ -46,3 +46,7 @@ input[type="range"]::-webkit-slider-thumb {
 .font-mono {
     font-family: 'JetBrains Mono', monospace;
 }
+
+.scroll-smooth {
+    scroll-behavior: smooth;
+}
